@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: earthpulse-ai
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: ENVIRONMENT
+        value: production
+      - key: QLOO_API_KEY
+        sync: false   # paste in the Render dashboard; never commit it
+      - key: ANTHROPIC_API_KEY
+        sync: false   # optional

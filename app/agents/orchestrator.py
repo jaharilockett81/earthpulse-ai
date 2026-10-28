@@ -1,0 +1,240 @@
+"""Orchestrator: a fixed, deterministic 8-stage pipeline (no agent loops).
+
+  1 intent        Taste Intelligence   free text / form -> interests
+  2 resolve       Taste Intelligence   interests -> Qloo entities or taste tags
+  3 portrait      Taste Intelligence   entities -> taste + ambience tags          (optional)
+  4 discovery     Discovery            one Qloo place call per category
+  5 evidence      Sustainability       origin, distances, EPA CO2e, low-impact signals
+  6 planning      Planning             score, rank, day plan, lighter swaps
+  7 verification  Verification         re-check stops, replace failures
+  8 explanation   Explanation          grounded "why" per card (AI rewording optional)
+
+Every stage is streamed to the UI as it starts and finishes.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+
+from ..config import Settings
+from ..llm import LLM
+from ..models import RunRequest
+from ..qloo.client import CallStats, QlooClient
+from ..qloo.taxonomy import CATEGORIES
+from . import baseline, discovery, explanation, planning, sustainability, taste, verification
+from .trace import Emit, StageFailed, Trace
+
+
+@dataclass
+class Context:
+    req: RunRequest
+    seeds: list[dict] = field(default_factory=list)
+    portrait: dict = field(default_factory=lambda: {"taste": [], "ambience": []})
+    intent_source: str = "form"
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def seed_ids(self) -> list[str]:
+        return [s["entity_id"] for s in self.seeds if s.get("entity_id")]
+
+    @property
+    def seed_tags(self) -> list[str]:
+        return [s["tag_id"] for s in self.seeds if s.get("tag_id")]
+
+    def user_words(self) -> set[str]:
+        return baseline.words([s["input"] for s in self.seeds] + [self.req.prompt or ""])
+
+
+async def prepare(req: RunRequest, client: QlooClient, llm: LLM, trace: Trace, stats: CallStats) -> Context:
+    ctx = Context(req=req)
+    async with trace.stage("intent", "Understand your request", "Taste Intelligence") as st:
+        seeds, ctx.intent_source = await taste.parse_intent(req, llm)
+        if not seeds:
+            raise StageFailed("no_interests", "We couldn't find any interests in that request. Try naming a film, "
+                                              "artist, book or place you love.")
+        st.detail = f"{len(seeds)} interest{'s' if len(seeds) != 1 else ''} from " + \
+            {"form": "your picks", "ai": "your words (AI-parsed)", "rules": "your words"}[ctx.intent_source]
+        st.data = {"interests": [s.name for s in seeds], "source": ctx.intent_source}
+    ctx.seeds = seeds_dicts = []
+    async with trace.stage("resolve", "Match interests to Qloo", "Taste Intelligence") as st:
+        seeds_dicts.extend(await taste.resolve_seeds(client, seeds, stats))
+        ok = [s for s in seeds_dicts if s["resolved_as"] in ("entity", "tag")]
+        missed = [s["input"] for s in seeds_dicts if s["resolved_as"] not in ("entity", "tag")]
+        if not ok:
+            raise StageFailed("no_match", "Qloo didn't recognise any of those interests. Try a more specific title "
+                                          "or name.")
+        if missed:
+            ctx.notes.append(f"Not matched in Qloo: {', '.join(missed)}.")
+        approx = [s["name"] for s in ok if s.get("approximate")]
+        if approx:
+            ctx.notes.append(f"Closest Qloo match used for: {', '.join(approx)}.")
+        st.detail = f"{len(ok)} of {len(seeds_dicts)} matched"
+        st.data = {"matched": [{"name": s["name"], "as": s["resolved_as"], "kind": s["kind"]} for s in ok],
+                   "missed": missed}
+    async with trace.stage("portrait", "Build your taste portrait", "Taste Intelligence", required=False) as st:
+        if ctx.seed_ids:
+            ctx.portrait = await taste.taste_portrait(client, ctx.seed_ids, stats)
+            st.detail = f"{len(ctx.portrait['taste'])} taste themes, {len(ctx.portrait['ambience'])} vibes"
+        else:
+            st.status = "skipped"
+            st.detail = "Only taste tags matched; no entities to profile"
+        st.data = {"themes": [t["name"] for t in ctx.portrait["taste"][:8]]}
+    return ctx
+
+
+async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settings: Settings, trace: Trace,
+                   stats: CallStats, *, use_llm: bool = True, geo_transport=None) -> dict:
+    req = ctx.req
+    tag = "" if mode == "qloo" else " (baseline)"
+    async with trace.stage(f"discovery{tag and '_b'}", f"Discover places{tag}", "Discovery") as st:
+        found = await discovery.discover(client, req, seed_ids=ctx.seed_ids, seed_tags=ctx.seed_tags,
+                                         stats=stats, use_signals=(mode == "qloo"))
+        if not found.candidates:
+            raise StageFailed("no_places", f"Qloo returned no matching places in {req.location} for those categories."
+                              + (" The step-free filter may be too strict there." if req.step_free else ""))
+        st.detail = f"{len(found.candidates)} places across {len(req.categories)} categories" + \
+            (" with your taste signals" if mode == "qloo" else " without taste signals")
+        st.data = {"per_category": found.per_category}
+    notes = list(ctx.notes)
+    for key, stat in found.per_category.items():
+        if stat.get("error"):
+            notes.append(f"{stat['label']}: {stat['error']}")
+        elif not stat["kept"]:
+            notes.append(f"No {stat['label'].lower()} passed the filters in {req.location}.")
+    cands = found.candidates
+    async with trace.stage(f"evidence{tag and '_b'}", f"Attach sustainability evidence{tag}", "Sustainability") as st:
+        origin = await sustainability.resolve_origin(req, found.locality, settings, transport=geo_transport)
+        if req.origin and (not origin or origin["kind"] != "geocoded"):
+            notes.append(f"Couldn't use “{req.origin}” as a starting point (not found, or over "
+                         f"{sustainability.MAX_ORIGIN_KM} km from {req.location}); distances are from the city centre.")
+        ev = sustainability.attach_evidence(cands, origin, req)
+        st.detail = (f"Distances from {origin['label']}" if origin else "No reference point; distances unavailable") + \
+            f" · {ev['with_signals']} places with lower-impact tags"
+        st.data = ev
+    async with trace.stage(f"planning{tag and '_b'}", f"Plan your days{tag}", "Planning") as st:
+        words = ctx.user_words()
+        for c in cands:
+            base = (c.place.affinity or 0.0) if mode == "qloo" else baseline.keyword_base(c, words)
+            planning.score(c, req, base)
+        pl = planning.plan(req, cands, origin)
+        st.detail = f"{sum(len(v) for v in pl['chosen'].values())} stops over {req.days} day" + ("s" if req.days > 1 else "")
+    async with trace.stage(f"verification{tag and '_b'}", f"Verify every stop{tag}", "Verification") as st:
+        ver = verification.verify(req, pl, mode)
+        if ver["replaced"]:
+            taken = {c.id for lst in pl["chosen"].values() for c in lst}
+            pl["swaps"] = {c.id: s for lst in pl["chosen"].values() for c in lst
+                           if (s := planning.lighter_swap(c, pl["ranked"].get(c.category, []), taken, req))}
+            pl["alternates"] = {k: [c.id for c in pl["ranked"].get(k, []) if c.id not in taken][:3]
+                                for k in req.categories}
+        pl["days"] = planning.build_days(req, pl["chosen"], origin)
+        st.detail = f"{ver['stops_checked']} stops passed" + (f", {len(ver['replaced'])} replaced" if ver["replaced"] else "")
+        st.data = {"replaced": ver["replaced"]}
+        if not ver["stops_checked"]:
+            raise StageFailed("nothing_verified", "None of the places found passed verification.")
+    async with trace.stage(f"explanation{tag and '_b'}", f"Explain each pick{tag}", "Explanation") as st:
+        by_id = {c.id: c for c in cands}
+        show = [c.id for lst in pl["chosen"].values() for c in lst]
+        show += [i for ids in pl["alternates"].values() for i in ids]
+        show += [s["to_id"] for s in pl["swaps"].values()]
+        cards = {}
+        for cid in dict.fromkeys(show):
+            c = by_id[cid]
+            facts, meta = explanation.facts_for(c, ctx.seeds, ctx.portrait, origin, mode)
+            cards[cid] = explanation.card(c, facts, meta, origin, ver["checks"].get(cid))
+        picked_cards = [cards[c.id] for lst in pl["chosen"].values() for c in lst]
+        src = await explanation.explain(picked_cards, llm, use_llm and mode == "qloo")
+        st.detail = "AI-reworded from grounded facts" if src == "ai" else "Written from grounded facts"
+    days = pl["days"]
+    car_total = None if req.car_free else round(sum(d["totals"]["car_kg_co2e"] or 0 for d in days), 2)
+    low_total = round(sum(d["totals"]["suggested_kg_co2e"] for d in days), 2)
+    return {
+        "mode": mode,
+        "origin": {k: origin[k] for k in ("label", "lat", "lon", "kind", "source")} if origin else None,
+        "locality": found.locality.model_dump() if found.locality else None,
+        "days": days,
+        "cards": cards,
+        "alternates": pl["alternates"],
+        "swaps": pl["swaps"],
+        "replaced": ver["replaced"],
+        "notes": notes,
+        "explanation_source": src,
+        "summary": {
+            "stops": sum(len(d["stops"]) for d in days),
+            "km": round(sum(d["totals"]["km"] for d in days), 2),
+            "suggested_kg_co2e": low_total,
+            "car_kg_co2e": car_total,
+            "saved_kg_co2e": round(car_total - low_total, 2) if car_total is not None else None,
+            "swaps": len(pl["swaps"]),
+            "complete": all(d["totals"]["complete"] for d in days),
+        },
+    }
+
+
+def request_summary(req: RunRequest) -> dict:
+    return {"location": req.location, "origin": req.origin, "days": req.days, "budget": req.budget,
+            "categories": [{"key": k, "label": CATEGORIES[k].label} for k in req.categories],
+            "priorities": req.priorities, "car_free": req.car_free, "step_free": req.step_free,
+            "travelers": req.travelers}
+
+
+async def run(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settings, emit: Emit | None = None,
+              geo_transport=None) -> dict:
+    run_id = uuid.uuid4().hex[:12]
+    trace = Trace(run_id, emit)
+    stats = CallStats()
+    ctx = await prepare(req, client, llm, trace, stats)
+    out = await run_mode(ctx, req.mode, client, llm, settings, trace, stats, geo_transport=geo_transport)
+    return {"type": "result", "run_id": run_id, "request": request_summary(req), "seeds": ctx.seeds,
+            "portrait": ctx.portrait, "intent_source": ctx.intent_source, **out,
+            "stats": stats.as_dict(), "trace": trace.as_list(), "fixtures": settings.fixtures_active}
+
+
+def top_list(result: dict, n: int = 6) -> list[dict]:
+    """Flatten a run into the top-n picks for the blind comparison (round-robin across categories)."""
+    by_cat: dict[str, list[str]] = {}
+    for d in result["days"]:
+        for s in d["stops"]:
+            by_cat.setdefault(s["category"], []).append(s["id"])
+    for k, ids in result["alternates"].items():
+        by_cat.setdefault(k, []).extend(ids)
+    out, i = [], 0
+    while len(out) < n and any(i < len(v) for v in by_cat.values()):
+        for ids in by_cat.values():
+            if i < len(ids) and len(out) < n:
+                c = result["cards"][ids[i]]
+                out.append({"id": c["id"], "name": c["name"], "category_label": c["category_label"],
+                            "image_url": c["image_url"], "tags": c["tags"][:4], "distance_km": c["distance_km"],
+                            "price_text": c["price_text"], "why": c["why"]["text"]})
+        i += 1
+    return out
+
+
+async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settings, emit: Emit | None = None,
+                  geo_transport=None, n: int = 6) -> dict:
+    run_id = uuid.uuid4().hex[:12]
+    trace = Trace(run_id, emit)
+    stats = CallStats()
+    ctx = await prepare(req, client, llm, trace, stats)
+    q = await run_mode(ctx, "qloo", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
+    b = await run_mode(ctx, "baseline", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
+    ql, bl = top_list(q, n), top_list(b, n)
+    q_ids, b_ids = {x["id"] for x in ql}, {x["id"] for x in bl}
+    flip = uuid.uuid4().int % 2 == 1
+    lists = {"A": bl if flip else ql, "B": ql if flip else bl}
+    return {
+        "type": "compare", "run_id": run_id, "request": request_summary(req), "seeds": ctx.seeds,
+        "lists": lists,
+        "reveal": {"A": "baseline" if flip else "qloo", "B": "qloo" if flip else "baseline"},
+        "overlap": len(q_ids & b_ids),
+        "metrics": {
+            "qloo": {"avg_km": _avg([x["distance_km"] for x in ql]), **{k: q["summary"][k] for k in ("km", "suggested_kg_co2e")}},
+            "baseline": {"avg_km": _avg([x["distance_km"] for x in bl]), **{k: b["summary"][k] for k in ("km", "suggested_kg_co2e")}},
+        },
+        "stats": stats.as_dict(), "trace": trace.as_list(), "fixtures": settings.fixtures_active,
+    }
+
+
+def _avg(xs: list) -> float | None:
+    xs = [x for x in xs if x is not None]
+    return round(sum(xs) / len(xs), 2) if xs else None

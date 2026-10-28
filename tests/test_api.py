@@ -1,0 +1,102 @@
+import json
+
+import httpx
+import respx
+from fastapi.testclient import TestClient
+
+from app.config import Settings
+from app.main import create_app
+
+from .conftest import BASE
+
+
+def events(resp):
+    return [json.loads(line) for line in resp.text.splitlines() if line.strip()]
+
+
+BODY = {"prompt": "A weekend for someone who loves Amélie and slow living", "location": "Lisbon",
+        "categories": ["nature", "coffee", "culture", "dining"], "priorities": ["low_carbon_travel"]}
+
+
+def test_health_hides_secrets(settings):
+    r = TestClient(create_app(settings)).get("/api/health")
+    assert r.status_code == 200
+    assert "test-key" not in r.text and r.json()["qloo_configured"] is True
+
+
+def test_run_streams_all_stages_and_result(settings, qloo_mock):
+    r = TestClient(create_app(settings)).post("/api/run", json=BODY)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/x-ndjson")
+    evs = events(r)
+    done = [e["stage"]["id"] for e in evs if e["type"] == "stage" and e["stage"]["status"] == "done"]
+    assert done == ["intent", "resolve", "portrait", "discovery", "evidence", "planning", "verification", "explanation"]
+    res = evs[-1]
+    assert res["type"] == "result"
+    assert len(res["days"]) == 2 and res["summary"]["stops"] == 8
+    for d in res["days"]:
+        for s in d["stops"]:
+            card = res["cards"][s["id"]]
+            assert card["name"].startswith("[Synthetic]")
+            assert "Bank" not in card["name"]
+            assert card["trip"]["source"]["name"].startswith("U.S. EPA")
+            assert all(ch["passed"] for ch in card["checks"] if ch["hard"])
+            assert {c["label"] for c in card["claims"]} >= {"listed", "computed", "not_verified"}
+    # Qloo calls carried the taste signal
+    insight_calls = [c.request for c in qloo_mock.calls if c.request.url.path == "/v2/insights"
+                     and c.request.url.params.get("filter.type") == "urn:entity:place"]
+    assert insight_calls and all(c.url.params.get("signal.interests.entities") for c in insight_calls)
+
+
+def test_step_free_filter_only_returns_tagged(settings, qloo_mock):
+    res = events(TestClient(create_app(settings)).post("/api/run", json={**BODY, "step_free": True}))[-1]
+    assert res["type"] == "result"
+    assert all(res["cards"][s["id"]]["step_free"] for d in res["days"] for s in d["stops"])
+
+
+def test_compare_is_blind_and_baseline_sends_no_taste(settings, qloo_mock):
+    evs = events(TestClient(create_app(settings)).post("/api/compare", json=BODY))
+    cmp = evs[-1]
+    assert cmp["type"] == "compare"
+    assert sorted(cmp["reveal"].values()) == ["baseline", "qloo"]
+    assert cmp["lists"]["A"] and cmp["lists"]["B"]
+    place_calls = [c.request for c in qloo_mock.calls if c.request.url.params.get("filter.type") == "urn:entity:place"]
+    assert any("signal.interests.entities" not in c.url.params for c in place_calls)
+
+
+def test_qloo_auth_failure_is_reported_honestly(settings):
+    with respx.mock(base_url=BASE) as r:
+        r.route().mock(return_value=httpx.Response(403))
+        evs = events(TestClient(create_app(settings)).post("/api/run", json=BODY))
+    assert evs[-1] == {"type": "error", "code": "qloo_auth", "message": "Qloo rejected this server's API key."}
+
+
+def test_missing_key_reports_not_configured():
+    evs = events(TestClient(create_app(Settings(qloo_api_key=""))).post("/api/run", json=BODY))
+    assert evs[-1]["code"] == "qloo_not_configured"
+
+
+def test_validation_error_is_readable(settings):
+    r = TestClient(create_app(settings)).post("/api/run", json={"location": "Lisbon"})
+    assert r.status_code == 422 and "favourite" in r.json()["error"]["message"]
+
+
+def test_rate_limit(qloo_mock):
+    s = Settings(qloo_api_key="k", qloo_max_rps=1000, runs_per_hour_per_ip=1)
+    c = TestClient(create_app(s))
+    assert c.post("/api/run", json=BODY).status_code == 200
+    assert c.post("/api/run", json=BODY).status_code == 429
+
+
+def test_search_autocomplete(settings, qloo_mock):
+    r = TestClient(create_app(settings)).get("/api/search", params={"q": "amelie"})
+    assert r.status_code == 200 and r.json()["results"][0]["kind"] == "movie"
+
+
+def test_fixtures_refused_in_production():
+    assert Settings(qloo_api_key="", dev_fixtures=True, environment="production").fixtures_active is False
+    assert Settings(qloo_api_key="", dev_fixtures=True, environment="development").fixtures_active is True
+
+
+def test_static_index_served(settings):
+    r = TestClient(create_app(settings)).get("/")
+    assert r.status_code == 200 and "EarthPulse" in r.text

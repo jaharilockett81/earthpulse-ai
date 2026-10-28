@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+!.env.example
+# Qloo's terms forbid publishing response data: never commit recorded responses.
+recordings/
+*.ndjson
+qloo_responses/
+.DS_Store

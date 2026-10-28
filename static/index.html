@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EarthPulse AI</title>
+  <meta name="description" content="Plan days out by taste, not just by keyword, and see the travel emissions behind every pick. Powered by Qloo's Taste AI.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23183F35'/%3E%3Cpath d='M5 17h5l3-7 4 13 3-8 2 2h5' fill='none' stroke='%23B7CC8B' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="#/" aria-label="EarthPulse AI home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15"/><path d="M5 17h5l3-7 4 13 3-8 2 2h5"/></svg>
+      <span>EarthPulse <em>AI</em></span>
+    </a>
+    <nav aria-label="Main">
+      <a href="#/plan">Plan</a>
+      <a href="#/lab">Comparison lab</a>
+      <a href="#/how">How it works</a>
+    </nav>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+
+  <main id="main">
+    <!-- Landing -->
+    <section id="view-landing" class="view">
+      <div class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Taste intelligence × climate evidence</p>
+          <h1>Plan days out that feel like <span class="u">you</span>, and weigh lighter on the planet.</h1>
+          <p class="lede">Tell EarthPulse a few things you love: a film, an artist, a book, a vibe. Qloo's taste graph finds places in your destination that people with your taste love. Then we put each pick on the scale: distance, travel CO2e from EPA factors, and a closer alternative when one fits just as well.</p>
+          <div class="cta-row">
+            <a class="btn primary" href="#/plan">Start planning</a>
+            <a class="btn ghost" href="#/lab">Try the comparison lab</a>
+          </div>
+          <div class="examples" aria-label="Examples">
+            <span>Try:</span>
+            <button class="chip example" data-prompt="A weekend for someone who loves Amélie, Studio Ghibli and slow living" data-location="Lisbon">Amélie + Ghibli in Lisbon</button>
+            <button class="chip example" data-prompt="A day inspired by Wes Anderson, jazz and vintage bookshops" data-location="Chicago">Wes Anderson + jazz in Chicago</button>
+            <button class="chip example" data-prompt="Bon Iver, Patagonia and long walks" data-location="Portland, OR">Bon Iver + Patagonia in Portland</button>
+          </div>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="orbit">
+            <div class="pulse"></div>
+            <div class="node n1">🎬 Amélie</div>
+            <div class="node n2">🎧 Bon Iver</div>
+            <div class="node n3">📚 Murakami</div>
+            <div class="node n4 leaf">🌿 Lighter swap</div>
+          </div>
+        </div>
+      </div>
+      <div class="pillars">
+        <article>
+          <h3>Taste, not keywords</h3>
+          <p>Your favourites become Qloo entities. Qloo ranks real places by cross-domain affinity, and its explainability tells us which of your interests drove each match.</p>
+        </article>
+        <article>
+          <h3>Evidence on every card</h3>
+          <p>Every statement is labelled: <span class="claim listed">Listed</span> <span class="claim computed">Computed</span> <span class="claim qloo_signal">Qloo signal</span> <span class="claim ai_written">AI-written</span> <span class="claim not_verified">Not verified</span></p>
+        </article>
+        <article>
+          <h3>Lighter swaps</h3>
+          <p>When a nearby place matches your taste almost as well, we show it next to your pick with the CO2e difference computed from EPA emission factors.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- Plan / onboarding -->
+    <section id="view-plan" class="view" hidden>
+      <form id="plan-form" class="planner" novalidate>
+        <div class="planner-head">
+          <h1>What do you love?</h1>
+          <p class="muted">Pick up to five favourites from any domain. Qloo connects tastes across film, music, books, brands and places.</p>
+        </div>
+
+        <fieldset class="card-block">
+          <legend>Your taste</legend>
+          <div class="seg" role="tablist" aria-label="How to describe your taste">
+            <button type="button" role="tab" class="seg-btn" aria-selected="true" data-input="picks">Pick favourites</button>
+            <button type="button" role="tab" class="seg-btn" aria-selected="false" data-input="prompt">Describe it</button>
+          </div>
+          <div id="input-picks">
+            <label for="seed-input" class="sr-only">Search films, artists, books, brands, places</label>
+            <div class="combo">
+              <div class="chips" id="seed-chips"></div>
+              <input id="seed-input" type="text" autocomplete="off" placeholder="Search a film, artist, book, brand, place…" role="combobox" aria-expanded="false" aria-controls="seed-list" aria-autocomplete="list">
+              <ul id="seed-list" class="suggest" role="listbox" hidden></ul>
+            </div>
+            <p class="hint">Can't find it? Press Enter to add it as typed. We'll match it to Qloo, or to a taste tag like “slow living”.</p>
+          </div>
+          <div id="input-prompt" hidden>
+            <label for="prompt" class="sr-only">Describe your taste</label>
+            <textarea id="prompt" rows="3" maxlength="400" placeholder="e.g. A weekend for someone who loves Amélie, Studio Ghibli and slow living"></textarea>
+          </div>
+        </fieldset>
+
+        <fieldset class="card-block grid2">
+          <legend>Where</legend>
+          <label>Destination city
+            <input id="location" type="text" required maxlength="120" placeholder="e.g. Lisbon">
+          </label>
+          <label>Starting point <span class="muted">(optional)</span>
+            <input id="origin" type="text" maxlength="120" placeholder="Your hotel's neighbourhood, or leave blank for the city centre">
+          </label>
+        </fieldset>
+
+        <fieldset class="card-block">
+          <legend>What kind of places</legend>
+          <div class="toggles" id="categories"></div>
+        </fieldset>
+
+        <fieldset class="card-block grid3">
+          <legend>Shape of the trip</legend>
+          <div>
+            <span class="label">Days</span>
+            <div class="seg small" id="days">
+              <button type="button" class="seg-btn" data-v="1" aria-pressed="false">1 day</button>
+              <button type="button" class="seg-btn" data-v="2" aria-pressed="true">2 days</button>
+            </div>
+          </div>
+          <div>
+            <span class="label">Budget</span>
+            <div class="seg small" id="budget">
+              <button type="button" class="seg-btn" data-v="" aria-pressed="true">Any</button>
+              <button type="button" class="seg-btn" data-v="1" aria-pressed="false">$</button>
+              <button type="button" class="seg-btn" data-v="2" aria-pressed="false">$$</button>
+              <button type="button" class="seg-btn" data-v="3" aria-pressed="false">$$$</button>
+            </div>
+          </div>
+          <label>Travellers
+            <input id="travelers" type="number" min="1" max="8" value="1">
+          </label>
+        </fieldset>
+
+        <fieldset class="card-block">
+          <legend>Priorities</legend>
+          <div class="toggles" id="priorities">
+            <label class="toggle"><input type="checkbox" value="low_carbon_travel" checked><span>Low-carbon travel</span></label>
+            <label class="toggle"><input type="checkbox" value="nature_time"><span>More time in nature</span></label>
+            <label class="toggle"><input type="checkbox" value="plant_forward"><span>Plant-forward food</span></label>
+            <label class="toggle"><input type="checkbox" value="secondhand"><span>Secondhand &amp; vintage</span></label>
+            <label class="toggle"><input type="checkbox" id="car_free"><span>I won't drive</span></label>
+            <label class="toggle"><input type="checkbox" id="step_free"><span>Step-free entrances</span></label>
+          </div>
+        </fieldset>
+
+        <p id="form-error" class="form-error" role="alert" hidden></p>
+        <div class="actions">
+          <button class="btn primary" type="submit" data-mode="plan">Build my plan</button>
+          <button class="btn ghost" type="submit" data-mode="compare">Compare with and without Qloo</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Results -->
+    <section id="view-results" class="view" hidden>
+      <div class="results">
+        <aside class="timeline-wrap" aria-label="Agent timeline">
+          <h2 class="h-small">Agent timeline</h2>
+          <ol id="timeline" class="timeline" aria-live="polite"></ol>
+          <p id="run-stats" class="muted tiny"></p>
+        </aside>
+        <div class="results-main" id="results-main">
+          <div class="skeleton" id="results-skeleton">
+            <div class="sk h"></div><div class="sk"></div><div class="sk"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Lab -->
+    <section id="view-lab" class="view" hidden>
+      <div class="lab-intro">
+        <h1>Comparison lab</h1>
+        <p class="lede">Same city, same Qloo place directory, same filters and carbon rules. One list is ranked by Qloo's taste graph using your favourites. The other is ranked by plain keyword overlap with your words, with no taste signal. Rate both before you reveal which is which.</p>
+        <p class="muted">Start one from <a href="#/plan">the planner</a> with “Compare with and without Qloo”.</p>
+        <div id="lab-tally" class="tally"></div>
+      </div>
+      <div class="results">
+        <aside class="timeline-wrap" aria-label="Agent timeline">
+          <h2 class="h-small">Agent timeline</h2>
+          <ol id="lab-timeline" class="timeline" aria-live="polite"></ol>
+        </aside>
+        <div id="lab-main" class="results-main"></div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section id="view-how" class="view prose" hidden>
+      <h1>How EarthPulse works</h1>
+      <p class="lede">A fixed eight-stage pipeline. No agent loops, no invented places, and every number traceable.</p>
+      <ol class="how-steps">
+        <li><b>Understand</b> your favourites, or parse your description (rules, or an optional LLM that may only copy words you used).</li>
+        <li><b>Match</b> each interest to a Qloo entity via search, or to a Qloo taste tag for concepts like “slow living”.</li>
+        <li><b>Portrait</b>: Qloo's tag insights summarise the themes and vibes your favourites share.</li>
+        <li><b>Discover</b>: one Qloo place-insights call per category, scoped to your destination and signalled by your taste, with explainability on.</li>
+        <li><b>Evidence</b>: straight-line distance from your start point, and round-trip CO2e by mode from the U.S. EPA GHG Emission Factors Hub (2025, Table 10).</li>
+        <li><b>Plan</b>: score = Qloo affinity − distance penalty (if low-carbon travel is on) + small boosts from the place's own Qloo tags. Lighter swaps are proposed when a much closer place is nearly as good a taste match.</li>
+        <li><b>Verify</b>: each stop is re-checked against its own tags (category, not closed, budget, step-free) and every CO2e figure is recomputed. Failures are replaced.</li>
+        <li><b>Explain</b>: a one-line “why” assembled from grounded facts only.</li>
+      </ol>
+      <h2>Scoring weights</h2>
+      <table class="weights">
+        <tr><th>Distance penalty</th><td>0.02 per km beyond the first km, capped at 0.25 (0.03 / 0.35 if you won't drive)</td></tr>
+        <tr><th>More time in nature</th><td>+0.05 for parks and gardens</td></tr>
+        <tr><th>Plant-forward food</th><td>+0.06 when the place's Qloo tags mention vegan, vegetarian or plant-based</td></tr>
+        <tr><th>Secondhand &amp; vintage</th><td>+0.06 when its tags mention thrift, vintage or used</td></tr>
+        <tr><th>Lighter swap</th><td>Same category, base score within 0.06, at most 60% of the distance and at least 1 km closer</td></tr>
+      </table>
+      <h2>Emission factors</h2>
+      <table class="weights">
+        <tr><th>Passenger car</th><td>0.2986 kg CO2e per vehicle-mile (divided by travellers)</td></tr>
+        <tr><th>Bus</th><td>0.0666 kg CO2e per passenger-mile</td></tr>
+        <tr><th>Transit rail</th><td>0.0935 kg CO2e per passenger-mile</td></tr>
+      </table>
+      <p class="muted">Source: <a href="https://www.epa.gov/system/files/documents/2025-01/ghg-emission-factors-hub-2025.pdf" target="_blank" rel="noopener">U.S. EPA GHG Emission Factors Hub, 2025, Table 10</a>; CO2e uses the Hub's AR5 GWPs (CH4 = 28, N2O = 265). Distances are straight-line, so figures are lower bounds and meant for comparison. Lower-impact tags are Qloo taste signals, not certifications.</p>
+    </section>
+  </main>
+
+  <div id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+    <div class="drawer-scrim" data-close></div>
+    <div class="drawer-panel">
+      <button class="drawer-close" data-close aria-label="Close evidence">×</button>
+      <div id="drawer-body"></div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <p>Place data and taste signals from <a href="https://www.qloo.com" target="_blank" rel="noopener">Qloo</a>. Emission factors from the U.S. EPA. Maps © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors. Opening hours and availability are not verified: check before you go.</p>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
