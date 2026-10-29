@@ -14,6 +14,7 @@ Every stage is streamed to the UI as it starts and finishes.
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass, field
 
@@ -22,7 +23,7 @@ from ..llm import LLM
 from ..models import RunRequest
 from ..qloo.client import CallStats, QlooClient
 from ..qloo.taxonomy import CATEGORIES
-from . import baseline, discovery, explanation, planning, sustainability, taste, verification
+from . import baseline, bridge, discovery, explanation, planning, sustainability, taste, verification
 from .trace import Emit, StageFailed, Trace
 
 
@@ -86,6 +87,7 @@ async def prepare(req: RunRequest, client: QlooClient, llm: LLM, trace: Trace, s
 async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settings: Settings, trace: Trace,
                    stats: CallStats, *, use_llm: bool = True, geo_transport=None) -> dict:
     req = ctx.req
+    started = time.monotonic()
     tag = "" if mode == "qloo" else " (baseline)"
     async with trace.stage(f"discovery{tag and '_b'}", f"Discover places{tag}", "Discovery") as st:
         found = await discovery.discover(client, req, seed_ids=ctx.seed_ids, seed_tags=ctx.seed_tags,
@@ -168,6 +170,47 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
             "swaps": len(pl["swaps"]),
             "complete": all(d["totals"]["complete"] for d in days),
         },
+        "drivers": drivers(ctx, [c for lst in pl["chosen"].values() for c in lst]),
+        "ms": int((time.monotonic() - started) * 1000),
+        "_planned": [c for lst in pl["chosen"].values() for c in lst],
+        "_origin": origin,
+    }
+
+
+def drivers(ctx: Context, planned: list) -> list[dict]:
+    """Which of the user's interests Qloo's explainability credits across the planned stops."""
+    names = {s["entity_id"]: s["name"] for s in ctx.seeds if s.get("entity_id")}
+    agg: dict[str, dict] = {}
+    for c in planned:
+        for i, x in enumerate(c.place.explainability):
+            if x.entity_id not in names:
+                continue
+            d = agg.setdefault(x.entity_id, {"name": names[x.entity_id], "total": 0.0, "top": 0})
+            d["total"] += x.score
+            d["top"] += i == 0
+    out = sorted(agg.values(), key=lambda d: d["total"], reverse=True)
+    for d in out:
+        d["total"] = round(d["total"], 3)
+    return out
+
+
+def list_metrics(result: dict, ids: list[str], user_words: set[str]) -> dict:
+    """Measured properties of a recommendation list (no judgement of 'quality' built in)."""
+    cards = [result["cards"][i] for i in ids]
+    n = len(cards) or 1
+    tags = [t.lower() for c in cards for t in c["tags"]]
+    kw = sum(1 for c in cards if user_words & baseline.words([c["name"], *c["tags"]]))
+    km = [c["distance_km"] for c in cards if c["distance_km"] is not None]
+    return {
+        "items": len(cards),
+        "categories": len({c["category"] for c in cards}),
+        "tag_diversity": round(len(set(tags)) / len(tags), 2) if tags else None,
+        "theme_match_rate": round(sum(1 for c in cards if c["shared_themes"]) / n, 2),
+        "keyword_match_rate": round(kw / n, 2),
+        "distance_evidence_rate": round(len(km) / n, 2),
+        "lower_impact_signal_rate": round(sum(1 for c in cards if c["signals"]) / n, 2),
+        "avg_km": round(sum(km) / len(km), 2) if km else None,
+        "ms": result["ms"],
     }
 
 
@@ -185,6 +228,23 @@ async def run(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settin
     stats = CallStats()
     ctx = await prepare(req, client, llm, trace, stats)
     out = await run_mode(ctx, req.mode, client, llm, settings, trace, stats, geo_transport=geo_transport)
+    planned, origin = out.pop("_planned"), out.pop("_origin")
+    out["bridges"] = []
+    if req.mode == "qloo" and ctx.seed_ids + ctx.seed_tags:
+        async with trace.stage("bridge", "Look for a Taste Bridge", "Taste Bridge", required=False) as st:
+            found = await bridge.find_bridges(client, req, seed_ids=ctx.seed_ids, seed_tags=ctx.seed_tags,
+                                              planned=planned, origin=origin, stats=stats)
+            for b in found["bridges"]:
+                c = b.pop("candidate")
+                facts, meta = explanation.facts_for(c, ctx.seeds, ctx.portrait, origin, "qloo")
+                facts.insert(0, f"It is outside the categories you picked, {b['hop']['km']} km "
+                                f"({b['hop']['label'].lower()}) from {b['near_name']}.")
+                out["cards"][c.id] = explanation.card(c, facts, meta, origin, b.pop("checks"))
+                out["bridges"].append({"id": c.id, **b})
+            st.detail = (f"{len(found['bridges'])} nearby bridge{'s' if len(found['bridges']) != 1 else ''} "
+                         f"from {found.get('considered', 0)} strong matches") if found["bridges"] or \
+                found.get("considered") else found.get("reason", "No strong matches near your stops")
+            st.data = {"affinity_floor": found.get("affinity_floor"), "categories": found.get("categories")}
     return {"type": "result", "run_id": run_id, "request": request_summary(req), "seeds": ctx.seeds,
             "portrait": ctx.portrait, "intent_source": ctx.intent_source, **out,
             "stats": stats.as_dict(), "trace": trace.as_list(), "fixtures": settings.fixtures_active}
@@ -218,7 +278,9 @@ async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Se
     ctx = await prepare(req, client, llm, trace, stats)
     q = await run_mode(ctx, "qloo", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
     b = await run_mode(ctx, "baseline", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
+    q.pop("_planned"), q.pop("_origin"), b.pop("_planned"), b.pop("_origin")
     ql, bl = top_list(q, n), top_list(b, n)
+    words = ctx.user_words()
     q_ids, b_ids = {x["id"] for x in ql}, {x["id"] for x in bl}
     flip = uuid.uuid4().int % 2 == 1
     lists = {"A": bl if flip else ql, "B": ql if flip else bl}
@@ -228,13 +290,11 @@ async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Se
         "reveal": {"A": "baseline" if flip else "qloo", "B": "qloo" if flip else "baseline"},
         "overlap": len(q_ids & b_ids),
         "metrics": {
-            "qloo": {"avg_km": _avg([x["distance_km"] for x in ql]), **{k: q["summary"][k] for k in ("km", "suggested_kg_co2e")}},
-            "baseline": {"avg_km": _avg([x["distance_km"] for x in bl]), **{k: b["summary"][k] for k in ("km", "suggested_kg_co2e")}},
+            "qloo": {**list_metrics(q, [x["id"] for x in ql], words),
+                     **{k: q["summary"][k] for k in ("km", "suggested_kg_co2e")}},
+            "baseline": {**list_metrics(b, [x["id"] for x in bl], words),
+                         **{k: b["summary"][k] for k in ("km", "suggested_kg_co2e")}},
         },
         "stats": stats.as_dict(), "trace": trace.as_list(), "fixtures": settings.fixtures_active,
     }
 
-
-def _avg(xs: list) -> float | None:
-    xs = [x for x in xs if x is not None]
-    return round(sum(xs) / len(xs), 2) if xs else None

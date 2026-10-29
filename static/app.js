@@ -238,7 +238,8 @@
   /* ------------------------------------------------------------ run */
   function setBusy(b) { $$("#plan-form button[type=submit]").forEach((x) => { x.disabled = b; }); }
 
-  async function startRun(body) {
+  async function startRun(body, prev = null) {
+    state.lastBody = body; state.prev = prev;
     state.result = null; state.running = true;
     location.hash = "#/results";
     const main = $("#results-main");
@@ -286,13 +287,15 @@
     $("#run-stats").textContent = `Qloo calls: ${res.stats.network_calls} live, ${res.stats.cache_hits} cached.`;
     const portrait = [...(res.portrait.taste || []).slice(0, 8).map((t) => `<span class="chip tag theme">${esc(t.name)}</span>`),
       ...(res.portrait.ambience || []).slice(0, 4).map((t) => `<span class="chip tag">${esc(t.name)}</span>`)].join("");
+    const diff = state.prev ? planDiff(state.prev, res) : "";
     const notes = [...res.notes, ...res.replaced.map((r) => `Verification replaced ${r.removed} (${r.failed.join(", ")})${r.replacement ? ` with ${r.replacement}` : ""}.`)];
     main.innerHTML = `
       <div class="res-head">
-        <p class="eyebrow">${esc(res.request.days)}-day plan · ${esc(cats)}</p>
-        <h1>${esc(res.request.location)}, matched to your taste</h1>
+        <p class="eyebrow">${esc(res.request.location)} · ${esc(res.request.days)}-day plan · ${esc(cats)}</p>
+        <h1>Your culture-inspired ${res.request.days > 1 ? "weekend" : "day"} is ready.</h1>
         <div class="seeds">${seedChips(res.seeds)}</div>
       </div>
+      ${diff}
       ${notes.length ? `<div class="notes"><ul>${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></div>` : ""}
       <div class="stats">
         <div class="stat"><div class="v">${s.stops}</div><div class="l">stops, each verified</div></div>
@@ -301,14 +304,16 @@
         <div class="stat hl"><div class="v">${s.saved_kg_co2e != null ? fmt(s.saved_kg_co2e, 2) + " kg" : "car-free"}</div>
           <div class="l">${s.saved_kg_co2e != null ? `less than driving every leg (${fmt(s.car_kg_co2e, 2)} kg)` : "no driving in this plan"}</div></div>
       </div>
-      ${portrait ? `<div class="portrait"><span class="h-small">Your taste portrait ${claim("qloo_signal")}</span>${portrait}</div>` : ""}
+      ${dnaPanel(res, portrait)}
       <div id="map" role="img" aria-label="Map of planned stops"></div>
       <div class="day-tabs" role="tablist">
         ${res.days.map((d) => `<button class="seg-btn" role="tab" data-day="${d.day}" aria-selected="${d.day === 1}">Day ${d.day}</button>`).join("")}
         <span class="day-totals" id="day-totals"></span>
       </div>
       <ol class="stops" id="stops"></ol>
+      ${bridgePanel(res)}
       <section><h2 class="h-small">More options</h2><div class="alts" id="alts"></div></section>
+      ${adjustPanel(res)}
       <p class="muted tiny">Origin: ${res.origin ? esc(res.origin.label) : "unknown"}. ${res.explanation_source === "ai" ? "Explanations reworded by AI from grounded facts." : "Explanations written from grounded facts."} Travel figures are straight-line lower bounds from EPA factors.</p>`;
     $$(".day-tabs .seg-btn", main).forEach((b) => b.addEventListener("click", () => {
       $$(".day-tabs .seg-btn", main).forEach((x) => x.setAttribute("aria-selected", String(x === b)));
@@ -321,7 +326,97 @@
         <span class="m">${esc(c.category_label)}${c.distance_km != null ? ` · ${fmt(c.distance_km)} km` : ""}${c.affinity != null ? ` · affinity ${c.affinity.toFixed(2)}` : ""}</span></button>`).join("")
       : `<p class="muted">No other options passed the filters.</p>`;
     $("#alts").addEventListener("click", (e) => { const b = e.target.closest(".alt"); if (b) openEvidence(res.cards[b.dataset.id], res); });
+    $$("[data-open]", $(".bridge-list") || document.createElement("div")).forEach((b) => b.addEventListener("click", () => openEvidence(res.cards[b.dataset.open], res)));
+    wireAdjust(res);
     drawMap(res);
+  }
+
+  /* ------------------------------------------------------------ cultural DNA */
+  function bars(items, valueKey, labelFn) {
+    const max = Math.max(...items.map((x) => x[valueKey] || 0), 1e-9);
+    return `<ul class="bars">${items.map((x) => `<li><span class="bl">${esc(x.name)}</span>
+      <span class="bt"><i style="width:${Math.max(4, Math.round(((x[valueKey] || 0) / max) * 100))}%"></i></span>
+      <span class="bv">${labelFn(x)}</span></li>`).join("")}</ul>`;
+  }
+  function dnaPanel(res, chips) {
+    const themes = (res.portrait.taste || []).filter((t) => t.affinity != null).slice(0, 7);
+    const drivers = res.drivers || [];
+    if (!themes.length && !drivers.length) {
+      return chips ? `<div class="portrait"><span class="h-small">Your taste portrait ${claim("qloo_signal")}</span>${chips}</div>` : "";
+    }
+    const vibes = (res.portrait.ambience || []).slice(0, 5).map((t) => `<span class="chip tag">${esc(t.name)}</span>`).join("");
+    return `<section class="panel dna" aria-labelledby="dna-h">
+      <div class="dna-head"><h2 id="dna-h">Your Cultural DNA</h2>${claim("qloo_signal")}</div>
+      <div class="dna-grid">
+        ${themes.length ? `<div><h3 class="h-small">Themes your favourites share</h3>${bars(themes, "affinity", (x) => x.affinity.toFixed(2))}</div>` : ""}
+        ${drivers.length ? `<div><h3 class="h-small">What drove this plan</h3>${bars(drivers, "total", (x) => `top match for ${x.top} stop${x.top === 1 ? "" : "s"}`)}
+          <p class="muted tiny">Summed Qloo explainability scores across the planned stops.</p></div>` : ""}
+      </div>
+      ${vibes ? `<div class="portrait"><span class="h-small">Vibes</span>${vibes}</div>` : ""}
+    </section>`;
+  }
+
+  /* ------------------------------------------------------------ taste bridge */
+  function bridgePanel(res) {
+    const bs = res.bridges || [];
+    if (!bs.length) return "";
+    return `<section class="bridge" aria-labelledby="bridge-h">
+      <div class="dna-head"><h2 id="bridge-h">Taste Bridge</h2>${claim("qloo_signal")} ${claim("computed")}</div>
+      <p class="muted">Outside the kinds of places you picked, but Qloo rates them as strong matches for your taste, and each is a short hop from a stop already in your plan.</p>
+      <div class="bridge-list">${bs.map((b) => {
+        const c = res.cards[b.id];
+        const hop = b.hop;
+        return `<article class="bridge-card">
+          <span class="cat">${CAT_ICON[c.category] || ""} ${esc(c.category_label)}</span>
+          <h3>${esc(c.name)}</h3>
+          <p>${c.affinity != null ? `Taste match <b>${c.affinity.toFixed(2)}</b> (plan floor ${fmt(b.affinity_floor, 2)}). ` : ""}${hop.mode === "walk" ? "🚶" : "🚌"} ${fmt(hop.km)} km from ${esc(b.near_name)}: ${fmt(hop.kg_co2e, 2)} kg CO2e${b.separate_trip_car_kg != null ? `, vs ${fmt(b.separate_trip_car_kg, 2)} kg for a separate car round trip` : ""}.</p>
+          <button class="linkish" data-open="${esc(c.id)}">Evidence &amp; sources</button></article>`;
+      }).join("")}</div></section>`;
+  }
+
+  /* ------------------------------------------------------------ adjust & regenerate */
+  const ADJ_TOGGLES = [["low_carbon_travel", "Low-carbon travel"], ["nature_time", "More nature"], ["plant_forward", "Plant-forward"], ["secondhand", "Secondhand"]];
+  function adjustPanel(res) {
+    const r = res.request;
+    return `<section class="panel adjust" aria-labelledby="adj-h">
+      <h2 id="adj-h">Adjust and regenerate</h2>
+      <p class="muted tiny">Change a constraint and the agent re-plans with the same taste signals (cached, so it's quick). We'll show what changed.</p>
+      <div class="toggles">
+        ${[1, 2].map((d) => `<label class="toggle"><input type="radio" name="adj-days" value="${d}" ${r.days === d ? "checked" : ""}><span>${d} day${d > 1 ? "s" : ""}</span></label>`).join("")}
+        ${[["", "Any budget"], [1, "$"], [2, "$$"], [3, "$$$"]].map(([v, l]) => `<label class="toggle"><input type="radio" name="adj-budget" value="${v}" ${String(r.budget ?? "") === String(v) ? "checked" : ""}><span>${l}</span></label>`).join("")}
+      </div>
+      <div class="toggles" style="margin-top:8px">
+        ${ADJ_TOGGLES.map(([k, l]) => `<label class="toggle"><input type="checkbox" data-prio="${k}" ${r.priorities.includes(k) ? "checked" : ""}><span>${l}</span></label>`).join("")}
+        <label class="toggle"><input type="checkbox" id="adj-car" ${r.car_free ? "checked" : ""}><span>I won't drive</span></label>
+        <label class="toggle"><input type="checkbox" id="adj-step" ${r.step_free ? "checked" : ""}><span>Step-free</span></label>
+      </div>
+      <div class="actions" style="margin-top:14px"><button class="btn primary small" id="adj-go">Regenerate plan</button></div>
+    </section>`;
+  }
+  function wireAdjust(res) {
+    const go = $("#adj-go");
+    if (!go || !state.lastBody) { if (go) go.closest(".adjust").hidden = true; return; }
+    go.addEventListener("click", () => {
+      const body = { ...state.lastBody };
+      body.days = Number($("input[name=adj-days]:checked").value);
+      body.budget = Number($("input[name=adj-budget]:checked").value) || null;
+      body.priorities = $$(".adjust [data-prio]:checked").map((i) => i.dataset.prio);
+      body.car_free = $("#adj-car").checked;
+      body.step_free = $("#adj-step").checked;
+      startRun(body, res);
+    });
+  }
+  function planDiff(prev, res) {
+    const ids = (r) => new Set(r.days.flatMap((d) => d.stops.map((x) => x.id)));
+    const a = ids(prev), b = ids(res);
+    const added = [...b].filter((x) => !a.has(x)).map((x) => res.cards[x]?.name).filter(Boolean);
+    const removed = [...a].filter((x) => !b.has(x)).map((x) => prev.cards[x]?.name).filter(Boolean);
+    const k0 = prev.summary.suggested_kg_co2e, k1 = res.summary.suggested_kg_co2e;
+    return `<div class="diff panel" role="status"><h3>Plan revised</h3>
+      <p>${added.length || removed.length ? `${added.length} stop${added.length === 1 ? "" : "s"} in, ${removed.length} out.` : "Same stops; only ordering or evidence changed."}
+      Travel ${fmt(prev.summary.km)} → ${fmt(res.summary.km)} km, ${fmt(k0, 2)} → ${fmt(k1, 2)} kg CO2e ${claim("computed")}</p>
+      ${added.length ? `<p class="tiny"><b>In:</b> ${added.map(esc).join(", ")}</p>` : ""}
+      ${removed.length ? `<p class="tiny muted"><b>Out:</b> ${removed.map(esc).join(", ")}</p>` : ""}</div>`;
   }
 
   function renderDay(res, n) {
@@ -520,10 +615,28 @@
       store.set("ep_lab", log.slice(-100));
       const m = cmp.metrics;
       $("#reveal-out").innerHTML = `<div class="panel"><h3>${q > b ? "You preferred the Qloo-ranked list." : q < b ? "You preferred the keyword baseline this time." : "A tie."}</h3>
-        <p class="muted">Average distance from the start point: Qloo ${fmt(m.qloo.avg_km)} km, baseline ${fmt(m.baseline.avg_km)} km ${claim("computed")}. Both lists used the same filters and carbon rules; only the taste signal differs.</p>
+        <p class="muted">Both lists used the same Qloo place directory, filters and carbon rules; only the taste signal differs. Measured on these two lists:</p>
+        ${metricsTable(m)}
         <a class="btn ghost small" href="#/plan">Run another comparison</a></div>`;
       renderTally();
     });
+  }
+
+  function metricsTable(m) {
+    const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+    const rows = [
+      ["Places share a theme with your Qloo taste portrait", pct(m.qloo.theme_match_rate), pct(m.baseline.theme_match_rate)],
+      ["Places whose name or tags contain your words", pct(m.qloo.keyword_match_rate), pct(m.baseline.keyword_match_rate)],
+      ["Distinct categories", m.qloo.categories, m.baseline.categories],
+      ["Tag diversity (unique ÷ total tags)", fmt(m.qloo.tag_diversity, 2), fmt(m.baseline.tag_diversity, 2)],
+      ["Average distance from start", `${fmt(m.qloo.avg_km)} km`, `${fmt(m.baseline.avg_km)} km`],
+      ["Have distance + CO2e evidence", pct(m.qloo.distance_evidence_rate), pct(m.baseline.distance_evidence_rate)],
+      ["Carry a lower-impact Qloo tag", pct(m.qloo.lower_impact_signal_rate), pct(m.baseline.lower_impact_signal_rate)],
+      ["Pipeline time for this list", `${fmt(m.qloo.ms / 1000, 1)} s`, `${fmt(m.baseline.ms / 1000, 1)} s`],
+    ];
+    return `<table class="weights metrics"><tr><th>Measure</th><th>Qloo</th><th>Baseline</th></tr>
+      ${rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join("")}</table>
+      <p class="muted tiny">Theme match uses Qloo's own portrait, so it favours the Qloo list; keyword match favours the baseline. Your blind rating is the fairer test. Times include Qloo throttling; cached responses make repeat runs faster.</p>`;
   }
 
   function renderTally() {

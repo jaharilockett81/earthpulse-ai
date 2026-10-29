@@ -232,6 +232,30 @@ input:focus, textarea:focus { border-color: var(--forest); outline: none; box-sh
 .error-card { background: var(--err-bg); color: var(--err); border-radius: var(--radius); padding: 20px; }
 .error-card h2 { color: var(--err); }
 
+/* ---------- cultural DNA, bridge, adjust ---------- */
+.dna-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.dna-head h2 { margin: 0; }
+.dna-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 10px; }
+.bars { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 7px; }
+.bars li { display: grid; grid-template-columns: minmax(90px, 32%) 1fr auto; gap: 10px; align-items: center; font-size: .9rem; }
+.bars .bl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: capitalize; }
+.bars .bt { height: 9px; background: var(--mist); border-radius: 5px; overflow: hidden; }
+.bars .bt i { display: block; height: 100%; background: linear-gradient(90deg, var(--forest), #3f6b5e); border-radius: 5px; }
+.bars .bv { font-size: .78rem; color: var(--ink-2); white-space: nowrap; }
+.bridge { background: #eef4e6; border: 1px solid var(--lime); border-radius: var(--radius); padding: 22px; }
+.bridge > p { margin: 0 0 14px; }
+.bridge-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.bridge-card { background: #fff; border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); display: grid; gap: 6px; align-content: start; }
+.bridge-card h3 { margin: 0; font-size: 1.05rem; }
+.bridge-card .cat { font-size: .78rem; color: var(--ink-2); }
+.bridge-card p { margin: 0; font-size: .88rem; }
+.bridge-card .linkish { justify-self: start; }
+.diff { border-left: 4px solid var(--lime); }
+.diff h3 { margin-bottom: 4px; }
+.diff p { margin: 4px 0; }
+.metrics td:nth-child(n+2), .metrics th:nth-child(n+2) { width: 18%; text-align: right; }
+.metrics th:first-child { width: auto; }
+
 /* ---------- drawer ---------- */
 .drawer { position: fixed; inset: 0; z-index: 40; }
 .drawer-scrim { position: absolute; inset: 0; background: rgba(32,40,36,.45); }
@@ -288,6 +312,7 @@ details.method summary { cursor: pointer; font-weight: 600; }
   .timeline li.done .t-agent, .timeline li.done .t-detail, .timeline li.skipped .t-detail { display: none; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .ab { grid-template-columns: 1fr; }
+  .dna-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
   .pillars, .grid2, .grid3 { grid-template-columns: 1fr; }

@@ -29,7 +29,7 @@ def test_run_streams_all_stages_and_result(settings, qloo_mock):
     assert r.status_code == 200 and r.headers["content-type"].startswith("application/x-ndjson")
     evs = events(r)
     done = [e["stage"]["id"] for e in evs if e["type"] == "stage" and e["stage"]["status"] == "done"]
-    assert done == ["intent", "resolve", "portrait", "discovery", "evidence", "planning", "verification", "explanation"]
+    assert done == ["intent", "resolve", "portrait", "discovery", "evidence", "planning", "verification", "explanation", "bridge"]
     res = evs[-1]
     assert res["type"] == "result"
     assert len(res["days"]) == 2 and res["summary"]["stops"] == 8
@@ -100,3 +100,73 @@ def test_fixtures_refused_in_production():
 def test_static_index_served(settings):
     r = TestClient(create_app(settings)).get("/")
     assert r.status_code == 200 and "EarthPulse" in r.text
+
+
+def test_taste_bridge_respects_its_contract(settings, qloo_mock):
+    from app.agents.bridge import MAX_HOP_KM
+
+    picked = set(BODY["categories"])
+    found_any = False
+    for city in ["Lisbon", "Chicago", "Kyoto", "Austin"]:
+        res = events(TestClient(create_app(settings)).post("/api/run", json={**BODY, "location": city}))[-1]
+        planned = {s["id"] for d in res["days"] for s in d["stops"]}
+        for b in res["bridges"]:
+            found_any = True
+            card = res["cards"][b["id"]]
+            assert card["category"] not in picked and card["category"] != "stay"
+            assert b["id"] not in planned and b["near_id"] in planned
+            assert b["hop"]["km"] <= MAX_HOP_KM
+            assert card["affinity"] >= b["affinity_floor"]
+            assert all(ch["passed"] for ch in card["checks"] if ch["hard"])
+    assert found_any
+
+
+def test_baseline_mode_run_has_no_bridge_and_keyword_base(settings, qloo_mock):
+    res = events(TestClient(create_app(settings)).post("/api/run", json={**BODY, "mode": "baseline"}))[-1]
+    assert res["type"] == "result" and res["bridges"] == []
+    assert all(res["cards"][s["id"]]["affinity"] is None for d in res["days"] for s in d["stops"])
+
+
+def test_compare_metrics_are_measured(settings, qloo_mock):
+    cmp = events(TestClient(create_app(settings)).post("/api/compare", json=BODY))[-1]
+    for side in ("qloo", "baseline"):
+        m = cmp["metrics"][side]
+        assert {"theme_match_rate", "keyword_match_rate", "tag_diversity", "distance_evidence_rate",
+                "lower_impact_signal_rate", "ms", "avg_km"} <= m.keys()
+        assert 0 <= m["keyword_match_rate"] <= 1 and m["ms"] >= 0
+
+
+def test_constraint_change_revises_plan(settings, qloo_mock):
+    c = TestClient(create_app(settings))
+    a = events(c.post("/api/run", json=BODY))[-1]
+    b = events(c.post("/api/run", json={**BODY, "days": 1, "step_free": True}))[-1]
+    assert len(b["days"]) == 1 and len(a["days"]) == 2
+    assert all(b["cards"][s["id"]]["step_free"] for s in b["days"][0]["stops"])
+
+
+def test_secret_never_leaks_into_stream_or_errors(settings):
+    with respx.mock(base_url=BASE) as r:
+        r.route().mock(return_value=httpx.Response(500, text="boom"))
+        text = TestClient(create_app(settings)).post("/api/run", json=BODY).text
+    assert "test-key" not in text and "qloo_unavailable" in text
+
+
+def test_timeout_is_reported(settings):
+    with respx.mock(base_url=BASE) as r:
+        r.route().mock(side_effect=httpx.ReadTimeout("slow"))
+        evs = events(TestClient(create_app(settings)).post("/api/run", json=BODY))
+    assert evs[-1]["code"] == "qloo_timeout"
+
+
+def test_evaluation_harness_runs_synthetic():
+    import asyncio
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("evaluate", Path(__file__).parent.parent / "scripts" / "evaluate.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    rows, agg = asyncio.run(mod.evaluate(use_fixtures=True))
+    assert len(rows) == len(mod.PERSONAS) and all("error" not in r for r in rows)
+    md = mod.render(rows, agg, True)
+    assert "SYNTHETIC DRY RUN" in md and "[Synthetic]" not in md  # no place names in the report

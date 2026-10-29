@@ -1,4 +1,10 @@
-# QA checklist (run against the live Render URL before submitting)
+# Release checklist (run against the live Render URL before submitting)
+
+## Blocking (needs Jahari)
+- [ ] Public GitHub repo created and code pushed
+- [ ] Render Blueprint deployed; `QLOO_API_KEY` set in Render's Environment tab
+- [ ] `python scripts/smoke.py <url>` passes against the live URL
+- [ ] `QLOO_API_KEY=... python scripts/evaluate.py --out docs/EVALUATION.md` run, reviewed, committed (aggregates only)
 
 ## Required by the hackathon
 - [ ] Live demo URL loads without login
@@ -14,6 +20,9 @@
 - [ ] Free-text “Describe it” mode works
 - [ ] Starting point (e.g. “Alfama”) changes the distances; an unknown one shows a note
 - [ ] 1-day and 2-day plans; budget $; step-free; car-free (no car figures shown)
+- [ ] Cultural DNA shows theme bars and “what drove this plan”
+- [ ] Taste Bridge appears for at least one example city (if none, say so; don't force it)
+- [ ] Adjust and regenerate: tick “I won't drive”, see “Plan revised”
 - [ ] Evidence drawer: claims, explainability table, score breakdown, EPA table, checks, Esc closes it
 - [ ] Comparison lab: rate both, reveal, tally updates
 - [ ] A nonsense city or interest shows a clear error, not a blank page
@@ -30,5 +39,7 @@
 4. Results: stats row, taste portrait and map
 5. A stop card with a lighter swap
 6. Evidence drawer (claims + EPA table)
-7. Comparison lab after reveal
-8. Mobile results view
+7. Comparison lab after reveal, with the metrics table
+8. Cultural DNA panel and Taste Bridge
+9. “Plan revised” after a constraint change
+10. Mobile results view
