@@ -180,14 +180,16 @@ def test_check_endpoint_condensed_run_and_compare(settings, qloo_mock):
     assert j["ok"] and "qloo" in j["metrics"] and "overlap" in j
 
 
-def test_city_centre_prefers_geocoded_town_point(settings):
+def test_city_centre_prefers_geocoded_town_point(settings, qloo_mock, monkeypatch):
+    from app.agents import sustainability
     from app.qloo import fixtures
 
-    with respx.mock(assert_all_called=False) as r:
-        r.route(host="hackathon.api.qloo.com").mock(side_effect=fixtures.handler)
-        lat0, lon0 = fixtures._centroid("Lisbon")
-        r.get(host="geocoding-api.open-meteo.com").mock(return_value=httpx.Response(200, json={"results": [
-            {"name": "Lisbon", "latitude": lat0 + 0.05, "longitude": lon0, "admin1": "Lisbon", "country": "Portugal"}]}))
-        res = events(TestClient(create_app(settings)).post("/api/run", json=BODY))[-1]
+    lat0, lon0 = fixtures._centroid("Lisbon")
+
+    async def fake_geocode(name, url, **kw):
+        return {"name": "Lisbon", "lat": lat0 + 0.05, "lon": lon0, "label": "Lisbon, Lisbon, Portugal"}
+
+    monkeypatch.setattr(sustainability, "geocode", fake_geocode)
+    res = events(TestClient(create_app(settings)).post("/api/run", json=BODY))[-1]
     assert res["origin"]["label"] == "Lisbon city centre" and res["origin"]["source"]["name"].startswith("Open-Meteo")
     assert abs(res["origin"]["lat"] - (lat0 + 0.05)) < 1e-9

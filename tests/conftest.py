@@ -16,6 +16,20 @@ def settings():
                     dev_fixtures=False, runs_per_hour_per_ip=50)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_geocoding(monkeypatch):
+    """Tests never reach the real geocoder (CI has internet; results would leak between tests)."""
+    from app.agents import sustainability
+    from app.evidence import geo
+
+    geo._CACHE.clear()
+
+    async def none(*a, **k):
+        return None
+
+    monkeypatch.setattr(sustainability, "geocode", none)
+
+
 @pytest.fixture
 def qloo_mock():
     with respx.mock(base_url=BASE, assert_all_called=False) as router:
