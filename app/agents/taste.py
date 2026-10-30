@@ -86,6 +86,18 @@ def similar(a: str, b: str) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 
 
+# Words that say what kind of thing something is, not which one: sharing only these is not a match
+# ("Kinfolk magazine" must not resolve to "InStyle Magazine").
+GENERIC_WORDS = {"the", "and", "of", "magazine", "records", "record", "band", "film", "movie", "book", "books",
+                 "music", "show", "series", "album", "brand", "studio", "studios", "restaurant", "cafe", "coffee"}
+
+
+def shares_distinctive_word(a: str, b: str) -> bool:
+    wa = {w for w in _norm(a).split() if len(w) > 2 and w not in GENERIC_WORDS}
+    wb = {w for w in _norm(b).split() if len(w) > 2 and w not in GENERIC_WORDS}
+    return bool(wa & wb)
+
+
 async def _tag_match(client: QlooClient, name: str, stats: CallStats) -> dict | None:
     try:
         tags = await client.search_tags(name, take=6, stats=stats)
@@ -124,7 +136,7 @@ async def _resolve_one(client: QlooClient, seed: Seed, stats: CallStats) -> dict
     tag = await _tag_match(client, seed.name, stats)
     if tag:
         return {**base, **tag}
-    if best and similar(seed.name, best.name) >= 0.5:
+    if best and similar(seed.name, best.name) >= 0.5 and shares_distinctive_word(seed.name, best.name):
         return {**base, "name": best.name, "entity_id": best.entity_id, "kind": best.kind,
                 "image_url": best.image_url, "resolved_as": "entity", "approximate": True,
                 "tags": [t.name for t in best.tags][:8]}

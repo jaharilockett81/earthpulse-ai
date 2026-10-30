@@ -197,7 +197,9 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
         out = {"ok": True, "ms": int((time.monotonic() - started) * 1000), "fixtures": res["fixtures"],
                "stats": res["stats"], "seeds": [{k: s.get(k) for k in ("input", "name", "kind", "resolved_as")}
                                                 for s in res["seeds"]],
-               "stages": [{k: st[k] for k in ("id", "status", "ms", "detail")} for st in res["trace"]]}
+               "stages": [{k: st[k] for k in ("id", "status", "ms", "detail")} for st in res["trace"]],
+               "per_category": next((st.get("data", {}).get("per_category") for st in res["trace"]
+                                     if st["id"] == "discovery"), None)}
         if compare:
             out.update(overlap=res["overlap"], metrics=res["metrics"], items=len(res["lists"]["A"]))
         else:

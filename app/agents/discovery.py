@@ -47,14 +47,17 @@ class DiscoveryResult:
     errors: list[QlooError]
 
 
-def _keep(place: Place, req: RunRequest) -> str | None:
-    if place.is_closed or is_blocked(place):
-        return None
+def _drop_reason(place: Place, req: RunRequest) -> str | None:
+    """Why a place is unusable for this request, or None if it can be kept."""
+    if place.is_closed:
+        return "closed"
+    if is_blocked(place):
+        return "not_an_experience"
     if req.budget and place.price_level and place.price_level > req.budget:
-        return None
+        return "over_budget"
     if req.step_free and not has_step_free_tag(place):
-        return None
-    return "ok"
+        return "no_step_free_tag"
+    return None
 
 
 async def discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str], seed_tags: list[str],
@@ -82,7 +85,8 @@ async def discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str], 
 
     def absorb(key: str, res) -> None:
         nonlocal locality
-        stat = per_category.setdefault(key, {"label": CATEGORIES[key].label, "returned": 0, "kept": 0, "dropped": 0})
+        stat = per_category.setdefault(key, {"label": CATEGORIES[key].label, "returned": 0, "kept": 0, "dropped": 0,
+                                             "why_dropped": {}})
         if isinstance(res, QlooError):
             errors.append(res)
             stat["error"] = res.user_message
@@ -96,8 +100,10 @@ async def discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str], 
             if p.entity_id in seen:
                 continue
             got = classify(p, [key]) or classify(p, req.categories)
-            if not got or not _keep(p, req):
+            why = _drop_reason(p, req) if got else "other_category"
+            if why:
                 stat["dropped"] += 1
+                stat["why_dropped"][why] = stat["why_dropped"].get(why, 0) + 1
                 continue
             seen.add(p.entity_id)
             candidates.append(Candidate(place=p, category=got, step_free=has_step_free_tag(p),

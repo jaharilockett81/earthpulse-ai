@@ -204,3 +204,9 @@ async def test_lowercase_concepts_try_tags_first(settings):
         search = r.get("/search").mock(return_value=httpx.Response(200, json={"results": []}))
         out = await _resolve_one(QlooClient(settings), Seed(name="botanical gardens"), CallStats())
     assert out["resolved_as"] == "tag" and tags.called and not search.called
+
+
+def test_approximate_seed_needs_a_distinctive_shared_word():
+    from app.agents.taste import shares_distinctive_word
+    assert not shares_distinctive_word("Kinfolk magazine", "InStyle Magazine")
+    assert shares_distinctive_word("Miles Davis Quintet", "Miles Davis")

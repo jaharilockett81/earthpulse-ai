@@ -22,7 +22,7 @@ from ..models import RunRequest
 from ..qloo.client import CallStats, QlooClient
 from ..qloo.taxonomy import CATEGORIES, classify, has_step_free_tag, low_impact_signals
 from . import verification
-from .discovery import Candidate, _keep
+from .discovery import Candidate, _drop_reason
 
 BRIDGE_AFFINITY_SLACK = 0.05
 MAX_BRIDGES = 3
@@ -50,7 +50,7 @@ async def find_bridges(client: QlooClient, req: RunRequest, *, seed_ids: list[st
         if p.entity_id in planned_ids or p.lat is None or p.lon is None or (p.affinity or 0) < floor:
             continue
         cat = classify(p, keys)
-        if not cat or cat in used_cats or not _keep(p, req):
+        if not cat or cat in used_cats or _drop_reason(p, req):
             continue
         considered += 1
         near = min(anchors, key=lambda a: haversine_km(a.place.lat, a.place.lon, p.lat, p.lon))
