@@ -39,3 +39,12 @@ def keyword_base(c: Candidate, user_words: set[str]) -> float:
     hits = sorted(user_words & hay)
     c.keyword_hits = hits
     return round(len(hits) / len(user_words), 3)
+
+
+def footprint_base(c, radius_km: float) -> float:
+    """Ablation arm C: no taste at all. Nearer is better, plus a small bonus for a lower-impact tag.
+
+    Unknown distance scores lowest, so the arm never rewards missing evidence.
+    """
+    near = 0.0 if c.distance_km is None else 1 - min(c.distance_km, radius_km) / radius_km
+    return round(near + (0.05 if c.signals else 0.0), 4)

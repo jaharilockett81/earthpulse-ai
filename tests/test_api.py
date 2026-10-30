@@ -224,3 +224,12 @@ def test_discovery_relocates_when_qloo_picks_a_namesake_town(settings, monkeypat
     assert res["type"] == "result" and res["summary"]["stops"] >= 4
     disc = next(s for s in res["trace"] if s["id"] == "discovery")
     assert disc["data"]["relocated"]["to"] == "Copenhagen" and "different town" in disc["detail"]
+
+
+def test_compare_includes_footprint_only_arm(settings, qloo_mock):
+    j = TestClient(create_app(settings)).get(
+        "/api/check", params={"prompt": "Amélie and slow living", "location": "Lisbon", "compare": "true"}).json()
+    m = j["metrics"]
+    assert j["ok"] and set(m) == {"qloo", "baseline", "footprint"} and "overlap_footprint" in j
+    assert m["footprint"]["avg_km"] <= m["baseline"]["avg_km"]
+    assert any(s["id"] == "grounding_g" and s["status"] == "done" for s in j["stages"])

@@ -627,7 +627,7 @@
       store.set("ep_lab", log.slice(-100));
       const m = cmp.metrics;
       $("#reveal-out").innerHTML = `<div class="panel"><h3>${q > b ? "You preferred the Qloo-ranked list." : q < b ? "You preferred the keyword baseline this time." : "A tie."}</h3>
-        <p class="muted">Both lists used the same Qloo place directory, filters and carbon rules; only the taste signal differs. Measured on these two lists:</p>
+        <p class="muted">Both lists used the same Qloo place directory, filters and carbon rules; only the taste signal differs. Measured on these lists, plus a third footprint-only list for reference:</p>
         ${metricsTable(m)}
         <a class="btn ghost small" href="#/plan">Run another comparison</a></div>`;
       renderTally();
@@ -636,19 +636,22 @@
 
   function metricsTable(m) {
     const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+    const arms = [["qloo", "Qloo taste"], ["baseline", "Keyword"], ["footprint", "Footprint only"]].filter(([k]) => m[k]);
     const rows = [
-      ["Places share a theme with your Qloo taste portrait", pct(m.qloo.theme_match_rate), pct(m.baseline.theme_match_rate)],
-      ["Places whose name or tags contain your words", pct(m.qloo.keyword_match_rate), pct(m.baseline.keyword_match_rate)],
-      ["Distinct categories", m.qloo.categories, m.baseline.categories],
-      ["Tag diversity (unique ÷ total tags)", fmt(m.qloo.tag_diversity, 2), fmt(m.baseline.tag_diversity, 2)],
-      ["Average distance from start", `${fmt(m.qloo.avg_km)} km`, `${fmt(m.baseline.avg_km)} km`],
-      ["Have distance + CO2e evidence", pct(m.qloo.distance_evidence_rate), pct(m.baseline.distance_evidence_rate)],
-      ["Carry a lower-impact Qloo tag", pct(m.qloo.lower_impact_signal_rate), pct(m.baseline.lower_impact_signal_rate)],
-      ["Pipeline time for this list", `${fmt(m.qloo.ms / 1000, 1)} s`, `${fmt(m.baseline.ms / 1000, 1)} s`],
+      ["Places share a theme with your Qloo taste portrait", (x) => pct(x.theme_match_rate)],
+      ["Places whose name or tags contain your words", (x) => pct(x.keyword_match_rate)],
+      ["Distinct categories", (x) => x.categories],
+      ["Tag diversity (unique ÷ total tags)", (x) => fmt(x.tag_diversity, 2)],
+      ["Average distance from start", (x) => `${fmt(x.avg_km)} km`],
+      ["Plan travel, straight-line", (x) => (x.km != null ? `${fmt(x.km)} km` : "Unavailable")],
+      ["Plan CO2e, walking + transit", (x) => (x.suggested_kg_co2e != null ? `${fmt(x.suggested_kg_co2e, 2)} kg` : "Unavailable")],
+      ["Have distance + CO2e evidence", (x) => pct(x.distance_evidence_rate)],
+      ["Carry a lower-impact Qloo tag", (x) => pct(x.lower_impact_signal_rate)],
+      ["Pipeline time for this list", (x) => `${fmt(x.ms / 1000, 1)} s`],
     ];
-    return `<table class="weights metrics"><tr><th>Measure</th><th>Qloo</th><th>Baseline</th></tr>
-      ${rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join("")}</table>
-      <p class="muted tiny">Theme match uses Qloo's own portrait, so it favours the Qloo list; keyword match favours the baseline. Your blind rating is the fairer test. Times include Qloo throttling; cached responses make repeat runs faster.</p>`;
+    return `<div class="table-scroll"><table class="weights metrics"><tr><th>Measure</th>${arms.map(([, l]) => `<th>${l}</th>`).join("")}</tr>
+      ${rows.map(([label, f]) => `<tr><td>${label}</td>${arms.map(([k]) => `<td>${f(m[k])}</td>`).join("")}</tr>`).join("")}</table></div>
+      <p class="muted tiny">All three use the same Qloo place directory, filters, 25 km area and carbon rules. Keyword ranks by your words without taste signals; Footprint only ranks by distance and lower-impact tags with no taste at all. Theme match uses Qloo's own portrait, so it favours the Qloo list; keyword match favours the keyword list. Your blind rating is the fairer test. Times include Qloo throttling; cached responses make repeat runs faster.</p>`;
   }
 
   function renderTally() {

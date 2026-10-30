@@ -88,8 +88,8 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
                    stats: CallStats, *, use_llm: bool = True, geo_transport=None) -> dict:
     req = ctx.req
     started = time.monotonic()
-    tag = "" if mode == "qloo" else " (baseline)"
-    async with trace.stage(f"discovery{tag and '_b'}", f"Discover places{tag}", "Discovery") as st:
+    tag, sfx = {"qloo": ("", ""), "baseline": (" (baseline)", "_b"), "green": (" (footprint-only)", "_g")}[mode]
+    async with trace.stage(f"discovery{sfx}", f"Discover places{tag}", "Discovery") as st:
         town = None if settings.fixtures_active else \
             await sustainability.geocode(req.location, settings.geocode_url, transport=geo_transport)
         found = await discovery.discover(client, req, seed_ids=ctx.seed_ids, seed_tags=ctx.seed_tags,
@@ -112,7 +112,7 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
                      f"like a different town, so places were searched within 15 km of {found.relocated['to']} "
                      f"(geocoded by Open-Meteo).")
     cands = found.candidates
-    async with trace.stage(f"evidence{tag and '_b'}", f"Attach sustainability evidence{tag}", "Sustainability") as st:
+    async with trace.stage(f"evidence{sfx}", f"Attach sustainability evidence{tag}", "Sustainability") as st:
         origin = await sustainability.resolve_origin(req, found.locality, settings, transport=geo_transport)
         if req.origin and (not origin or origin["kind"] != "geocoded"):
             notes.append(f"Couldn't use “{req.origin}” as a starting point (not found, or over "
@@ -142,14 +142,15 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
         raise StageFailed("out_of_area", f"Every place Qloo found for “{req.location}” is more than {radius:g} km "
                           f"from {origin['label'] if origin else 'the destination'}. Try a specific city "
                           f"(for example “Portland, OR” rather than a whole state).")
-    async with trace.stage(f"planning{tag and '_b'}", f"Plan your days{tag}", "Planning") as st:
+    async with trace.stage(f"planning{sfx}", f"Plan your days{tag}", "Planning") as st:
         words = ctx.user_words()
         for c in cands:
-            base = (c.place.affinity or 0.0) if mode == "qloo" else baseline.keyword_base(c, words)
+            base = (c.place.affinity or 0.0) if mode == "qloo" else \
+                baseline.footprint_base(c, radius) if mode == "green" else baseline.keyword_base(c, words)
             planning.score(c, req, base)
         pl = planning.plan(req, cands, origin)
         st.detail = f"{sum(len(v) for v in pl['chosen'].values())} stops over {req.days} day" + ("s" if req.days > 1 else "")
-    async with trace.stage(f"verification{tag and '_b'}", f"Verify every stop{tag}", "Verification") as st:
+    async with trace.stage(f"verification{sfx}", f"Verify every stop{tag}", "Verification") as st:
         ver = verification.verify(req, pl, mode)
         if ver["replaced"]:
             taken = {c.id for lst in pl["chosen"].values() for c in lst}
@@ -162,7 +163,7 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
         st.data = {"replaced": ver["replaced"]}
         if not ver["stops_checked"]:
             raise StageFailed("nothing_verified", "None of the places found passed verification.")
-    async with trace.stage(f"explanation{tag and '_b'}", f"Explain each pick{tag}", "Explanation") as st:
+    async with trace.stage(f"explanation{sfx}", f"Explain each pick{tag}", "Explanation") as st:
         by_id = {c.id: c for c in cands}
         show = [c.id for lst in pl["chosen"].values() for c in lst]
         show += [i for ids in pl["alternates"].values() for i in ids]
@@ -296,7 +297,8 @@ def empty_note(stat: dict, location: str, radius_km: float) -> str:
 
 async def check_grounding(trace: Trace, out: dict, req: RunRequest, stats: CallStats, seeds: list[dict],
                           suffix: str = "", radius_km: float = 25.0) -> None:
-    async with trace.stage(f"grounding{suffix and '_b'}", f"Check every claim is grounded{suffix}", "Grounding") as st:
+    sid = {"": "", " (baseline)": "_b", " (footprint-only)": "_g"}.get(suffix, "_x")
+    async with trace.stage(f"grounding{sid}", f"Check every claim is grounded{suffix}", "Grounding") as st:
         g = grounding.validate(out, req, stats.place_names, seeds, radius_km=radius_km)
         out["grounding"] = g
         st.data = {"checks": [{k: c[k] for k in ("id", "passed")} for c in g["checks"]]}
@@ -336,11 +338,15 @@ async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Se
     ctx = await prepare(req, client, llm, trace, stats)
     q = await run_mode(ctx, "qloo", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
     b = await run_mode(ctx, "baseline", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
-    q.pop("_planned"), q.pop("_origin"), b.pop("_planned"), b.pop("_origin")
-    q["bridges"], b["bridges"] = [], []
+    # Ablation arm C: same candidate pool as the baseline (cached Qloo calls), ranked by footprint only.
+    g = await run_mode(ctx, "green", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
+    for x in (q, b, g):
+        x.pop("_planned"), x.pop("_origin")
+        x["bridges"] = []
     await check_grounding(trace, q, req, stats, ctx.seeds, radius_km=settings.discovery_radius_km)
     await check_grounding(trace, b, req, stats, ctx.seeds, " (baseline)", radius_km=settings.discovery_radius_km)
-    ql, bl = top_list(q, n), top_list(b, n)
+    await check_grounding(trace, g, req, stats, ctx.seeds, " (footprint-only)", radius_km=settings.discovery_radius_km)
+    ql, bl, gl = top_list(q, n), top_list(b, n), top_list(g, n)
     words = ctx.user_words()
     q_ids, b_ids = {x["id"] for x in ql}, {x["id"] for x in bl}
     flip = uuid.uuid4().int % 2 == 1
@@ -355,7 +361,10 @@ async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Se
                      **{k: q["summary"][k] for k in ("km", "suggested_kg_co2e")}},
             "baseline": {**list_metrics(b, [x["id"] for x in bl], words),
                          **{k: b["summary"][k] for k in ("km", "suggested_kg_co2e")}},
+            "footprint": {**list_metrics(g, [x["id"] for x in gl], words),
+                          **{k: g["summary"][k] for k in ("km", "suggested_kg_co2e")}},
         },
+        "overlap_footprint": len(q_ids & {x["id"] for x in gl}),
         "stats": stats.as_dict(), "trace": trace.as_list(), "fixtures": settings.fixtures_active,
     }
 

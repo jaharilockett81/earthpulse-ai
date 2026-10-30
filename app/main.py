@@ -201,7 +201,8 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
                "per_category": next((st.get("data", {}).get("per_category") for st in res["trace"]
                                      if st["id"] == "discovery"), None)}
         if compare:
-            out.update(overlap=res["overlap"], metrics=res["metrics"], items=len(res["lists"]["A"]))
+            out.update(overlap=res["overlap"], overlap_footprint=res["overlap_footprint"], metrics=res["metrics"],
+                       items=len(res["lists"]["A"]))
         else:
             out.update(summary=res["summary"], notes=res["notes"], grounding=res["grounding"],
                        bridges=len(res["bridges"]), swaps=len(res["swaps"]),

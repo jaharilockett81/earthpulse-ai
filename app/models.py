@@ -52,7 +52,7 @@ class RunRequest(BaseModel):
     step_free: bool = False
     travelers: int = Field(default=1, ge=1, le=8)
     days: Literal[1, 2] = 2
-    mode: Literal["qloo", "baseline"] = "qloo"
+    mode: Literal["qloo", "baseline", "green"] = "qloo"
 
     @field_validator("location", "origin", "prompt")
     @classmethod
