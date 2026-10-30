@@ -232,12 +232,15 @@ class QlooClient:
         take: int = 15,
         explain: bool = True,
         stats: CallStats | None = None,
+        point: tuple[float, float] | None = None,
+        radius_m: int = 15000,
     ) -> tuple[list[Place], Locality | None]:
-        params: dict[str, Any] = {
-            "filter.type": "urn:entity:place",
-            "filter.location.query": location_query.strip()[:120],
-            "take": max(1, min(take, 50)),
-        }
+        params: dict[str, Any] = {"filter.type": "urn:entity:place", "take": max(1, min(take, 50))}
+        if point:  # (lat, lon): search around a coordinate instead of Qloo's own name lookup
+            params["filter.location"] = f"POINT({point[1]} {point[0]})"
+            params["filter.location.radius"] = radius_m
+        else:
+            params["filter.location.query"] = location_query.strip()[:120]
         if seed_ids:
             params["signal.interests.entities"] = ",".join(seed_ids)
             if explain:

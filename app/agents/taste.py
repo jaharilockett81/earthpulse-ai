@@ -129,14 +129,15 @@ async def _resolve_one(client: QlooClient, seed: Seed, stats: CallStats) -> dict
         hits = []
     hits = [h for h in hits if "urn:entity:album" not in h.types]
     best = max(hits, key=lambda h: (similar(seed.name, h.name), h.popularity or 0), default=None)
-    if best and similar(seed.name, best.name) >= 0.72:
+    score = similar(seed.name, best.name) if best else 0.0
+    if best and (score >= 0.85 or (score >= 0.72 and shares_distinctive_word(seed.name, best.name))):
         return {**base, "name": best.name, "entity_id": best.entity_id, "kind": best.kind,
                 "image_url": best.image_url, "resolved_as": "entity",
                 "tags": [t.name for t in best.tags][:8], "disambiguation": best.disambiguation}
     tag = await _tag_match(client, seed.name, stats)
     if tag:
         return {**base, **tag}
-    if best and similar(seed.name, best.name) >= 0.5 and shares_distinctive_word(seed.name, best.name):
+    if best and score >= 0.5 and shares_distinctive_word(seed.name, best.name):
         return {**base, "name": best.name, "entity_id": best.entity_id, "kind": best.kind,
                 "image_url": best.image_url, "resolved_as": "entity", "approximate": True,
                 "tags": [t.name for t in best.tags][:8]}

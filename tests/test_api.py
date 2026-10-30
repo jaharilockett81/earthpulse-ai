@@ -193,3 +193,34 @@ def test_city_centre_prefers_geocoded_town_point(settings, qloo_mock, monkeypatc
     res = events(TestClient(create_app(settings)).post("/api/run", json=BODY))[-1]
     assert res["origin"]["label"] == "Lisbon city centre" and res["origin"]["source"]["name"].startswith("Open-Meteo")
     assert abs(res["origin"]["lat"] - (lat0 + 0.05)) < 1e-9
+
+
+def test_discovery_relocates_when_qloo_picks_a_namesake_town(settings, monkeypatch):
+    """Live, Qloo resolved "Copenhagen" to a town with one restaurant. A geocoded point retry fixes it."""
+    import httpx
+    import respx
+
+    from app.agents import sustainability
+    from app.qloo import fixtures
+
+    lat0, lon0 = fixtures._centroid("Anytown")
+
+    async def fake_geocode(name, url, **kw):
+        return {"name": "Copenhagen", "lat": lat0, "lon": lon0, "label": "Copenhagen, Denmark"}
+
+    def handler(req):
+        p = req.url.params
+        if req.url.path == "/v2/insights" and p.get("filter.type") == "urn:entity:place" \
+                and "filter.location.query" in p:
+            return httpx.Response(200, json={"results": {"entities": []}})
+        if "filter.location" in p:
+            assert p["filter.location"] == f"POINT({lon0} {lat0})" and p["filter.location.radius"] == "15000"
+        return fixtures.handler(req)
+
+    monkeypatch.setattr(sustainability, "geocode", fake_geocode)
+    with respx.mock(base_url=BASE, assert_all_called=False) as r:
+        r.route().mock(side_effect=handler)
+        res = events(TestClient(create_app(settings)).post("/api/run", json={**BODY, "location": "Copenhagen"}))[-1]
+    assert res["type"] == "result" and res["summary"]["stops"] >= 4
+    disc = next(s for s in res["trace"] if s["id"] == "discovery")
+    assert disc["data"]["relocated"]["to"] == "Copenhagen" and "different town" in disc["detail"]

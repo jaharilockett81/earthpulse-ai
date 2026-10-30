@@ -90,8 +90,10 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
     started = time.monotonic()
     tag = "" if mode == "qloo" else " (baseline)"
     async with trace.stage(f"discovery{tag and '_b'}", f"Discover places{tag}", "Discovery") as st:
+        town = None if settings.fixtures_active else \
+            await sustainability.geocode(req.location, settings.geocode_url, transport=geo_transport)
         found = await discovery.discover(client, req, seed_ids=ctx.seed_ids, seed_tags=ctx.seed_tags,
-                                         stats=stats, use_signals=(mode == "qloo"))
+                                         stats=stats, use_signals=(mode == "qloo"), town=town)
         if not found.candidates:
             raise StageFailed("no_places", f"Qloo returned no matching places in {req.location} for those categories."
                               + (" The step-free filter may be too strict there." if req.step_free else ""))
@@ -100,7 +102,10 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
         adapted = [v["label"] for v in found.per_category.values() if v.get("adapted")]
         if adapted:
             st.detail += f" · too few {', '.join(a.lower() for a in adapted)} passed your filters, so it searched wider once"
-        st.data = {"per_category": found.per_category}
+        if found.relocated:
+            st.detail += f" · Qloo's match for “{req.location}” was a different town, so it searched around " \
+                         f"{found.relocated['to']}'s map point instead"
+        st.data = {"per_category": found.per_category, "relocated": found.relocated}
     notes = list(ctx.notes)
     for key, stat in found.per_category.items():
         if stat.get("error"):
