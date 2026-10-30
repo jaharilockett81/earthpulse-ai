@@ -63,9 +63,10 @@ Judging criteria mapped to code, tests and demo evidence: [docs/TRACEABILITY.md]
   Qloo signal, AI-written, or Not verified.
 - **Lighter swaps**, shown side by side: original pick vs. a closer place that keeps most of the taste match, with
   distance, round-trip CO2e and the taste-match difference computed the same way for both.
-- **Geographic gate.** Every stop must be within 25 km (`DISCOVERY_RADIUS_KM`) of the start, and no leg may exceed
-  50 km. A whole-state destination such as “Oregon” gets a clear “pick a city” message instead of a 1,900 km plan.
-  If Qloo matches a city name to a smaller namesake town, discovery retries around the geocoded city and says so.
+- **City-level geography.** A state or country (“Florida”, “Oregon”) is refused before any Qloo call, with city
+  choices. Cities are geocoded and validated, then Qloo is asked only for places within 25 km of the city point
+  (`filter.location` + radius). A wider area (40 or 60 km) is offered, never applied silently. Partial plans say
+  “X of Y stops” and why. Every travel leg names its start and end.
 - **Priorities**: low-carbon travel, more time in nature, plant-forward food, secondhand and vintage, car-free,
   step-free entrances (from Qloo's accessibility tag).
 - **Day plans** with walk/transit legs between stops and day totals compared with driving.
@@ -132,7 +133,7 @@ No key yet? `EARTHPULSE_DEV_FIXTURES=1 uvicorn app.main:app` serves clearly-labe
 ## Tests
 
 ```bash
-python -m pytest -q                              # 63 unit + API tests, Qloo mocked with respx
+python -m pytest -q                              # 67 unit + API tests, Qloo mocked with respx
 python scripts/failure_drill.py                   # 9 deliberate failure scenarios
 python scripts/smoke.py http://localhost:8000     # end-to-end against a running server (live test)
 python scripts/evaluate.py --url <deployment> --json eval.json   # 3-arm persona evaluation; exits 1 on a grounding failure

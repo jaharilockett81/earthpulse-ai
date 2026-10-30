@@ -50,23 +50,35 @@ quotes these counts, for example “Qloo returned 12 museums & culture for X, bu
 25 km)”. Places are never invented to fill a category.
 
 ### Geographic validation
-1. **Destination.** Qloo resolves the destination name (`filter.location.query`). Open-Meteo geocodes it too.
-   - If Qloo's locality is more than 60 km from the geocoded city and too few places come back, discovery retries
-     once with `filter.location=POINT(lon lat)` and `filter.location.radius=15000` around the geocoded point.
-   - The retry is shown in a note and in the discovery stage.
-   - This is how “Copenhagen” (matched by Qloo to a small namesake town) was fixed.
-2. **Start point.** The start is your geocoded starting point, if it lies within 60 km of the destination.
-   Otherwise it is the geocoded city centre, if that lies within 60 km of Qloo's locality. Otherwise it is
-   Qloo's locality point.
-3. **Area gate.** A place more than `DISCOVERY_RADIUS_KM` (default 25 km) in a straight line from the start is
-   dropped and counted as “out of area”. So is a place with impossible coordinates (latitude outside ±90 or
-   longitude outside ±180). A place with no coordinates is kept but labelled Not verified, with no distance or
-   CO2e.
-4. **Nothing in the area.** If no place survives, the run stops with “try a specific city” rather than building
-   a plan from far-away places. A whole-state destination such as “Oregon” produced a 1,924 km plan before this
-   gate existed.
-5. **Grounding.** The grounding check independently re-verifies that every place shown is within the radius and
-   that no leg exceeds twice the radius.
+1. **Destination must be a city.** This is checked before any Qloo call.
+   - A state, province or country (for example “Florida”, “Oregon” or “Japan”) is refused with a few example
+     cities to pick from.
+   - Otherwise the name is geocoded with Open-Meteo (GeoNames). The hit is accepted only if it is a populated
+     place (feature code `PPL*`) whose name matches what was typed.
+   - Open-Meteo returns “Floridablanca, Colombia” for “Florida”, and a hit like that is never used as a
+     substitute.
+   - The resolved city, region, country, coordinates and feature code are kept with the result.
+2. **Discovery is constrained at the source.** Qloo is asked for places around the city point:
+   `filter.location=POINT(lon lat)` and `filter.location.radius` = the search radius in metres. This applies to
+   every category call and to the Taste Bridge.
+   - If the geocoder can't confirm the city, or Qloo refuses the point query, Qloo resolves the name itself
+     (`filter.location.query`) and step 4 filters the results. The user is told when this happens.
+3. **Search radius.** The default is 25 km. If too few places qualify, the app *offers* 40 km or 60 km as
+   buttons. It never widens the radius by itself.
+4. **Start point.** The start is your own starting point if it geocodes within 60 km. Otherwise it is the
+   validated city centre. Otherwise it is “Qloo's map point for X”, labelled as such and never called a city
+   centre.
+5. **Area gate.** A place beyond the radius in a straight line from the start, or with impossible coordinates,
+   is dropped and counted as “out of area”. A place with no coordinates is kept but labelled Not verified.
+   If nothing is left, the run stops with counts and the radius offer.
+6. **Completeness.** A plan with fewer stops than requested (days × categories) is shown as “A partial plan:
+   X of Y stops”. It comes with the run's own counts (returned, kept, why each place was left out) and the
+   smallest useful adjustments. A day with no stops has no travel legs.
+7. **Legs.** Every leg names its two ends (start → stop → … → start) and is marked straight-line.
+   - A one-stop day is an out-and-back from the start, so its distance is twice the stop's distance.
+   - The 36.1 km “Florida” day was exactly that, measured from Qloo's point for the whole state.
+8. **Grounding.** The grounding check independently re-verifies that every place shown is within the radius
+   and that no leg exceeds twice the radius.
 
 ## Scoring
 

@@ -9,7 +9,8 @@ EarthPulse is a deterministic, bounded pipeline of tool-using stages. We do not 
 | Intent | Rules (optional LLM, validated) | Anthropic API (optional) | Which interests are in the text |
 | Resolve | Tool-using | Qloo `/search`, `/v2/tags` | Entity vs. tag vs. "not matched"; rejects weak matches |
 | Portrait | Tool-using | Qloo `/v2/insights` (tags) | Themes and ambience your interests share |
-| Discovery | Tool-using, adaptive | Qloo `/v2/insights` (places), Open-Meteo | Re-queries a thin category once (take 50). Retries around the geocoded city when Qloo picked a namesake town. |
+| Destination | Tool-using | Open-Meteo | Refuses states/countries; validates the geocoded city (populated place, matching name) |
+| Discovery | Tool-using, adaptive | Qloo `/v2/insights` (places, `filter.location` POINT + radius) | Re-queries a thin category once (take 50). Falls back to Qloo's name lookup if the city can't be confirmed. |
 | Evidence | Pure functions | Open-Meteo (start point) | Distances, EPA CO2e, area gate (25 km) |
 | Planning | Pure functions | none | Multi-objective score, day plans, lighter swaps |
 | Verification | Pure functions | none | Per-stop checks, replaces failures from ranked alternates |
@@ -19,7 +20,7 @@ EarthPulse is a deterministic, bounded pipeline of tool-using stages. We do not 
 
 Every stage logs its name, status, duration and a detail line, and streams them to the UI. Qloo calls log the
 path, status, attempt and time, never the key. Retries are bounded (3 attempts), as is adaptation (once per
-category) and relocation (once per run). Nothing loops.
+category) and the point-query fallback (once per run). Nothing loops.
 
 ## Implemented and verified live
 

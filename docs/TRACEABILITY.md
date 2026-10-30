@@ -8,8 +8,8 @@ Each row points to code you can read, a test or script you can run, and what to 
 | Claim | Code | Test / script | Demo evidence |
 |---|---|---|---|
 | Qloo used at 6 points: search, tags, tag insights, place insights with signals, explainability, Taste Bridge | `app/qloo/client.py`, `app/agents/taste.py`, `discovery.py`, `bridge.py` | `tests/test_client.py`, `tests/test_api.py` | The agent timeline shows the Qloo call count; each card's evidence drawer shows the Qloo affinity and the interests credited by explainability |
-| Bounded, adaptive tool use (thin category re-query; namesake-town relocation) | `app/agents/discovery.py` | `tests/test_grounding.py` (20 → 50), `tests/test_api.py::test_discovery_relocates_when_qloo_picks_a_namesake_town` | Copenhagen: the discovery stage says it searched around the city's map point |
-| Deterministic geographic gate | `app/agents/sustainability.py::gate_by_area`, `grounding.py` (geography) | `tests/test_geography.py` | Try "Oregon": a clear message asking for a city; try "Portland, OR": every stop within 25 km |
+| City-level destination, discovery constrained at the source | `app/evidence/destination.py`, `app/agents/discovery.py` | `tests/test_geography.py` (state-only, geocoder mismatch, one-stop plan), `tests/test_api.py::test_discovery_is_constrained_around_the_validated_city` | Try “Florida”: city choices appear before any Qloo call; the timeline's first stage shows the resolved city and radius |
+| Deterministic geographic gate | `app/agents/sustainability.py::gate_by_area`, `grounding.py` (geography) | `tests/test_geography.py` | Try "Portland, OR": every stop within 25 km |
 | Grounding validator: 8 checks, withholds on failure | `app/agents/grounding.py` | `tests/test_grounding.py` | The "Grounding check: 8 of 8 passed" panel under each plan |
 | Failure handling | `app/qloo/client.py`, `app/main.py` | `scripts/failure_drill.py` (9/9) | Unknown interest → "Not matched in Qloo" note |
 | No secrets exposed | `app/config.py`, `app/main.py` | `tests/test_api.py` (secret never in stream or health) | `/api/health` shows only `qloo_configured: true` |

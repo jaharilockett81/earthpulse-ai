@@ -85,7 +85,8 @@ substituting a different magazine (an earlier build matched it to "InStyle Magaz
   2025 factors (see `docs/METHODOLOGY.md`). A plan total of 0.00 kg means every leg was 2.5 km or less
   and was assigned walking, not that data was missing.
 - Qloo's results for a city can change between runs, and Qloo's own place-search coverage varies by city.
-  For example, "Copenhagen" matched a much smaller namesake town until the geocoded-point retry was added.
+  For example, "Copenhagen" matched a much smaller namesake town until discovery switched to querying around the
+  geocoded city point. That change came after this run, so these numbers come from the earlier discovery method.
 
 ## Regression gates (run in CI with synthetic data)
 
