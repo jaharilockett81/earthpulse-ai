@@ -206,6 +206,7 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
                        stops=[{"name": res["cards"][s["id"]]["name"], "category": s["category"],
                                "affinity": res["cards"][s["id"]]["affinity"], "km": res["cards"][s["id"]]["distance_km"],
                                "links": [l["name"] for l in res["cards"][s["id"]]["taste_links"]][:2],
+                               "signals": res["cards"][s["id"]]["signals"], "tags": res["cards"][s["id"]]["tags"][:6],
                                "has_image": bool(res["cards"][s["id"]]["image_url"])}
                               for d in res["days"] for s in d["stops"]])
         return out
