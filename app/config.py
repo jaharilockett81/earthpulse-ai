@@ -17,6 +17,12 @@ def _bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _secret(name: str) -> str:
+    """Read a key; placeholder values some dashboards force you to enter count as unset."""
+    v = os.getenv(name, "").strip()
+    return "" if v.lower() in {"none", "null", "-", "unset", "changeme"} else v
+
+
 def _float(name: str, default: float) -> float:
     try:
         return float(os.getenv(name, default))
@@ -27,14 +33,14 @@ def _float(name: str, default: float) -> float:
 @dataclass(frozen=True)
 class Settings:
     # Qloo — the hackathon key only works on the hackathon host.
-    qloo_api_key: str = field(default_factory=lambda: os.getenv("QLOO_API_KEY", "").strip(), repr=False)
+    qloo_api_key: str = field(default_factory=lambda: _secret("QLOO_API_KEY"), repr=False)
     qloo_base_url: str = field(default_factory=lambda: os.getenv("QLOO_BASE_URL", "https://hackathon.api.qloo.com").rstrip("/"))
     qloo_timeout_s: float = field(default_factory=lambda: _float("QLOO_TIMEOUT_S", 12.0))
     qloo_max_rps: float = field(default_factory=lambda: _float("QLOO_MAX_RPS", 4.0))  # key limit is 5/s
     qloo_cache_ttl_s: float = field(default_factory=lambda: _float("QLOO_CACHE_TTL_S", 24 * 3600))
 
     # Optional LLM (natural-language prompt parsing + explanation polish). App works without it.
-    anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", "").strip(), repr=False)
+    anthropic_api_key: str = field(default_factory=lambda: _secret("ANTHROPIC_API_KEY"), repr=False)
     llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "claude-haiku-5-5"))
     llm_timeout_s: float = field(default_factory=lambda: _float("LLM_TIMEOUT_S", 15.0))
 
