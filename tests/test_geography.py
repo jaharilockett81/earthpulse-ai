@@ -88,3 +88,10 @@ def test_grounding_flags_far_place_if_one_slips_through(settings, qloo_mock):
     g = grounding.validate(res, __import__("app.models", fromlist=["RunRequest"]).RunRequest(**BODY),
                            {k: c["name"] for k, c in res["cards"].items()}, res["seeds"])
     assert {c["id"]: c["passed"] for c in g["checks"]}["geography"] is False
+
+
+def test_every_returned_place_is_accounted_for(settings):
+    res = _run(settings, _shifting(lambda p, i: i % 3 == 0), {**BODY, "location": "Oregon"})
+    disc = next(s for s in res["trace"] if s["id"] == "discovery")
+    for stat in disc["data"]["per_category"].values():
+        assert stat["returned"] == stat["kept"] + stat["dropped"] == stat["kept"] + sum(stat["why_dropped"].values())

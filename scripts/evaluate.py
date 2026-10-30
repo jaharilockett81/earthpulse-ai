@@ -1,12 +1,17 @@
-"""Reproducible Qloo-vs-baseline evaluation over fixed test personas.
+"""Reproducible three-arm ablation over fixed test personas.
 
-    QLOO_API_KEY=... python scripts/evaluate.py --out docs/EVALUATION.md      # live Qloo
-    python scripts/evaluate.py --fixtures                                     # synthetic dry run
+    python scripts/evaluate.py --url https://earthpulse-ai-plos.onrender.com --out docs/eval.md --json eval.json
+    QLOO_API_KEY=... python scripts/evaluate.py --out docs/eval.md       # in-process, live Qloo
+    python scripts/evaluate.py --fixtures                                 # synthetic dry run, no key
 
-For each persona it runs the comparison pipeline (same city, categories, filters and carbon rules;
-one list ranked by Qloo taste signals, one by keyword overlap) and reports measured, aggregate
-metrics only. No place names or other Qloo response data are written, per Qloo's terms.
-Personas are invented test inputs, not real users.
+Arms, all on the same Qloo place directory, city, categories, filters, 25 km area and carbon rules:
+  qloo       ranked by Qloo taste affinity for the user's interests
+  baseline   no taste signals; ranked by keyword overlap with the user's words
+  footprint  no taste signals; ranked by distance from the start plus lower-impact tags
+
+Aggregate metrics only: no place names or other Qloo response data are written, per Qloo's terms.
+Personas are invented test inputs, not real users. Exits 1 if any arm fails grounding (which includes
+the geography check) or a persona errors, so it can gate a release.
 """
 
 from __future__ import annotations
@@ -15,9 +20,12 @@ import argparse
 import asyncio
 import dataclasses
 import datetime as dt
+import json
 import statistics
 import sys
 from pathlib import Path
+
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -40,17 +48,32 @@ PERSONAS = [
     {"id": "P5 Design lover", "prompt": "Wes Anderson, Bauhaus, Kinfolk magazine",
      "location": "Copenhagen", "categories": ["culture", "coffee", "makers", "dining"]},
 ]
-KEYS = ["theme_match_rate", "keyword_match_rate", "categories", "tag_diversity", "avg_km",
-        "distance_evidence_rate", "lower_impact_signal_rate", "ms"]
+ARMS = ["qloo", "baseline", "footprint"]
+KEYS = ["theme_match_rate", "keyword_match_rate", "categories", "tag_diversity", "avg_km", "km",
+        "suggested_kg_co2e", "distance_evidence_rate", "lower_impact_signal_rate", "ms"]
+LABELS = {"theme_match_rate": "Share sharing a theme with the Qloo taste portrait (favours Qloo)",
+          "keyword_match_rate": "Share whose name/tags contain the user's words (favours keyword)",
+          "categories": "Distinct categories", "tag_diversity": "Tag diversity (unique ÷ total)",
+          "avg_km": "Average straight-line distance from start (km)", "km": "Planned travel, straight-line (km)",
+          "suggested_kg_co2e": "Planned CO2e, walking + transit (kg)",
+          "distance_evidence_rate": "Share with distance + CO2e evidence",
+          "lower_impact_signal_rate": "Share with a lower-impact Qloo tag", "ms": "Pipeline time per list (ms)"}
 
 
-async def evaluate(use_fixtures: bool) -> tuple[list[dict], dict]:
+def _row(p: dict, cmp: dict) -> dict:
+    matched = sum(1 for s in cmp["seeds"] if s["resolved_as"] in ("entity", "tag"))
+    return {"id": p["id"], "matched": f"{matched}/{len(cmp['seeds'])}", "overlap": cmp["overlap"],
+            "overlap_footprint": cmp["overlap_footprint"], "items": cmp["items"], "metrics": cmp["metrics"],
+            "grounding": cmp["grounding"], "calls": cmp["stats"]["network_calls"]}
+
+
+async def evaluate_local(use_fixtures: bool) -> list[dict]:
     settings = get_settings()
     if use_fixtures:
         settings = dataclasses.replace(settings, qloo_api_key="synthetic", qloo_max_rps=1000)
         client = QlooClient(settings, transport=fixtures.transport())
     elif not settings.qloo_configured:
-        sys.exit("QLOO_API_KEY is not set (or pass --fixtures for a synthetic dry run).")
+        sys.exit("QLOO_API_KEY is not set (pass --url to evaluate a deployment, or --fixtures for a dry run).")
     else:
         client = QlooClient(settings)
     llm = LLM(dataclasses.replace(settings, anthropic_api_key=""))  # rules only: reproducible
@@ -61,68 +84,82 @@ async def evaluate(use_fixtures: bool) -> tuple[list[dict], dict]:
                              priorities=["low_carbon_travel"], days=2)
             try:
                 cmp = await orchestrator.compare(req, client=client, llm=llm, settings=settings)
-            except QlooError as e:
-                rows.append({"id": p["id"], "error": e.user_message})
+            except (QlooError, orchestrator.StageFailed) as e:
+                rows.append({"id": p["id"], "error": getattr(e, "user_message", None) or e.message})
                 continue
-            matched = sum(1 for s in cmp["seeds"] if s["resolved_as"] in ("entity", "tag"))
-            rows.append({"id": p["id"], "matched": f"{matched}/{len(cmp['seeds'])}", "overlap": cmp["overlap"],
-                         "items": len(cmp["lists"]["A"]), "qloo": cmp["metrics"]["qloo"],
-                         "baseline": cmp["metrics"]["baseline"], "calls": cmp["stats"]["network_calls"]})
+            rows.append(_row(p, {**cmp, "items": len(cmp["lists"]["A"])}))
     finally:
         await client.aclose()
+    return rows
+
+
+def evaluate_url(base: str) -> list[dict]:
+    rows = []
+    with httpx.Client(base_url=base.rstrip("/"), timeout=120) as c:
+        for p in PERSONAS:
+            r = c.get("/api/check", params={"prompt": p["prompt"], "location": p["location"], "days": 2,
+                                            "categories": ",".join(p["categories"]), "compare": "true"})
+            j = r.json()
+            if r.status_code != 200 or not j.get("ok"):
+                rows.append({"id": p["id"], "error": j.get("message") or f"HTTP {r.status_code}"})
+                continue
+            if j.get("fixtures"):
+                sys.exit("The deployment is serving synthetic fixtures, not Qloo. Refusing to report it as live.")
+            rows.append(_row(p, j))
+    return rows
+
+
+def aggregate(rows: list[dict]) -> dict:
     ok = [r for r in rows if "error" not in r]
-    agg = {k: {m: round(statistics.mean(r[m][k] for r in ok if r[m][k] is not None), 3) if ok else None
-               for m in ("qloo", "baseline")} for k in KEYS}
-    return rows, agg
+    return {k: {a: round(statistics.mean(r["metrics"][a][k] for r in ok), 3) if ok else None for a in ARMS}
+            for k in KEYS}
 
 
-def render(rows: list[dict], agg: dict, use_fixtures: bool) -> str:
+def render(rows: list[dict], agg: dict, source: str, synthetic: bool) -> str:
     when = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    out = ["# Evaluation: Qloo taste signals vs. keyword baseline", ""]
-    if use_fixtures:
+    out = ["# Evaluation: Qloo taste vs. keyword vs. footprint-only", ""]
+    if synthetic:
         out += ["> **SYNTHETIC DRY RUN.** Generated from `app/qloo/fixtures.py`, not Qloo. These numbers say nothing "
                 "about Qloo; they only show the harness works.", ""]
-    out += [f"Run: {when}. Personas are invented test inputs. Each list is the top {rows[0].get('items', 6) if rows else 6} "
-            "places, same city/categories/filters/carbon rules; only the ranking signal differs. "
-            "Aggregate metrics only (no Qloo response data).", "",
-            "## Averages over personas", "", "| Metric | Qloo | Baseline |", "|---|---|---|"]
-    labels = {"theme_match_rate": "Share sharing a theme with the Qloo taste portrait (favours Qloo)",
-              "keyword_match_rate": "Share whose name/tags contain the user's words (favours baseline)",
-              "categories": "Distinct categories", "tag_diversity": "Tag diversity (unique ÷ total)",
-              "avg_km": "Average distance from start (km)", "distance_evidence_rate": "Share with distance + CO2e evidence",
-              "lower_impact_signal_rate": "Share with a lower-impact Qloo tag", "ms": "Pipeline time per list (ms)"}
-    for k in KEYS:
-        out.append(f"| {labels[k]} | {agg[k]['qloo']} | {agg[k]['baseline']} |")
-    out += ["", "## Per persona", "", "| Persona | Interests matched | Overlap | Theme match Q/B | Keyword match Q/B | "
-            "Avg km Q/B | Qloo calls |", "|---|---|---|---|---|---|---|"]
+    out += [f"Run: {when}. Source: {source}. {len(PERSONAS)} invented personas, top 6 places per arm, 2-day plans.", "",
+            "## Averages over personas", "", "| Metric | Qloo | Keyword | Footprint |", "|---|---|---|---|"]
+    out += [f"| {LABELS[k]} | {agg[k]['qloo']} | {agg[k]['baseline']} | {agg[k]['footprint']} |" for k in KEYS]
+    out += ["", "## Per persona", "", "| Persona | Matched | Overlap Q∩K | Overlap Q∩F | Theme Q/K/F | Avg km Q/K/F | "
+            "Plan kg Q/K/F | Qloo calls |", "|---|---|---|---|---|---|---|---|"]
     for r in rows:
         if "error" in r:
-            out.append(f"| {r['id']} | error: {r['error']} | | | | | |")
+            out.append(f"| {r['id']} | error: {r['error']} | | | | | | |")
             continue
-        q, b = r["qloo"], r["baseline"]
-        out.append(f"| {r['id']} | {r['matched']} | {r['overlap']}/{r['items']} | {q['theme_match_rate']}/{b['theme_match_rate']} | "
-                   f"{q['keyword_match_rate']}/{b['keyword_match_rate']} | {q['avg_km']}/{b['avg_km']} | {r['calls']} |")
-    out += ["", "## How to read this", "",
-            "- Neither automatic relevance proxy is neutral, so both are reported. The blind ratings in the comparison "
-            "lab are the human test.",
-            "- Lower overlap means Qloo's taste signal changes which places surface, not just their order.",
-            "- Pipeline time includes Qloo throttling (≤4 req/s) and caching; the baseline reuses cached search results.",
-            "- Reproduce with `python scripts/evaluate.py --out docs/EVALUATION.md`.", ""]
+        m = r["metrics"]
+        f = lambda k: "/".join(str(m[a][k]) for a in ARMS)  # noqa: E731
+        out.append(f"| {r['id']} | {r['matched']} | {r['overlap']}/{r['items']} | {r['overlap_footprint']}/{r['items']} | "
+                   f"{f('theme_match_rate')} | {f('avg_km')} | {f('suggested_kg_co2e')} | {r['calls']} |")
+    out += ["", "Neither automatic relevance proxy is neutral; the Comparison Lab's blind ratings are the human test. "
+            "No significance testing: five personas is a smoke-level sample.", ""]
     return "\n".join(out)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--url", help="evaluate a deployment through its /api/check endpoint")
     ap.add_argument("--fixtures", action="store_true", help="synthetic dry run, no Qloo key needed")
     ap.add_argument("--out", help="write markdown here instead of stdout")
+    ap.add_argument("--json", help="also write the machine-readable report here")
     a = ap.parse_args()
-    rows, agg = asyncio.run(evaluate(a.fixtures))
-    md = render(rows, agg, a.fixtures)
+    rows = evaluate_url(a.url) if a.url else asyncio.run(evaluate_local(a.fixtures))
+    agg = aggregate(rows)
+    md = render(rows, agg, a.url or ("fixtures" if a.fixtures else "in-process, live Qloo"), a.fixtures)
+    if a.json:
+        Path(a.json).write_text(json.dumps({"rows": rows, "averages": agg, "synthetic": a.fixtures}, indent=2))
     if a.out:
         Path(a.out).write_text(md)
         print(f"wrote {a.out}")
     else:
         print(md)
+    bad = [r["id"] for r in rows if "error" in r or not all(r["grounding"].values())]
+    if bad:
+        print(f"FAILED: {', '.join(bad)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

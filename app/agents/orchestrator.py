@@ -282,7 +282,8 @@ async def run(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settin
 
 REASONS = {"out_of_area": "too far away", "other_category": "really a different kind of place",
            "not_an_experience": "not somewhere to visit", "closed": "marked closed",
-           "over_budget": "over your budget", "no_step_free_tag": "not tagged step-free"}
+           "over_budget": "over your budget", "no_step_free_tag": "not tagged step-free",
+           "duplicate": "already in another category"}
 
 
 def empty_note(stat: dict, location: str, radius_km: float) -> str:
@@ -365,6 +366,8 @@ async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Se
                           **{k: g["summary"][k] for k in ("km", "suggested_kg_co2e")}},
         },
         "overlap_footprint": len(q_ids & {x["id"] for x in gl}),
+        "grounding": {"qloo": q["grounding"]["passed"], "baseline": b["grounding"]["passed"],
+                      "footprint": g["grounding"]["passed"]},
         "stats": stats.as_dict(), "trace": trace.as_list(), "fixtures": settings.fixtures_active,
     }
 

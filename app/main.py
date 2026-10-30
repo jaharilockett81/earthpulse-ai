@@ -202,7 +202,7 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
                                      if st["id"] == "discovery"), None)}
         if compare:
             out.update(overlap=res["overlap"], overlap_footprint=res["overlap_footprint"], metrics=res["metrics"],
-                       items=len(res["lists"]["A"]))
+                       grounding=res["grounding"], items=len(res["lists"]["A"]))
         else:
             out.update(summary=res["summary"], notes=res["notes"], grounding=res["grounding"],
                        bridges=len(res["bridges"]), swaps=len(res["swaps"]),

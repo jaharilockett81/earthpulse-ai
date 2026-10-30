@@ -115,6 +115,8 @@ async def _discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str],
     locality: Locality | None = None
     need = {k: (1 if k == "stay" else req.days) for k in req.categories}
 
+    looked: set[tuple[str, str]] = set()
+
     def absorb(key: str, res) -> None:
         nonlocal locality
         stat = per_category.setdefault(key, {"label": CATEGORIES[key].label, "returned": 0, "kept": 0, "dropped": 0,
@@ -129,7 +131,12 @@ async def _discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str],
         locality = locality or loc
         stat["returned"] = max(stat["returned"], len(places))
         for p in places:
-            if p.entity_id in seen:
+            if (key, p.entity_id) in looked:  # a re-query returns the first pass again; count each place once
+                continue
+            looked.add((key, p.entity_id))
+            if p.entity_id in seen:  # already kept from another category's call
+                stat["dropped"] += 1
+                stat["why_dropped"]["duplicate"] = stat["why_dropped"].get("duplicate", 0) + 1
                 continue
             got = classify(p, [key]) or classify(p, req.categories)
             why = _drop_reason(p, req) if got else "other_category"
