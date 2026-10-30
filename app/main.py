@@ -173,7 +173,8 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
     async def check(request: Request, prompt: str = Query(min_length=3, max_length=400),
                     location: str = Query(min_length=2, max_length=120),
                     categories: str = Query(default=",".join(DEFAULT_CATEGORIES), max_length=200),
-                    days: int = Query(default=2, ge=1, le=2), compare: bool = False):
+                    days: int = Query(default=2, ge=1, le=2), compare: bool = False,
+                    radius_km: int = Query(default=25)):
         """Read-only, condensed run for verifying a deployment (e.g. scripts/evaluate.py --url).
 
         Returns stage outcomes, counts, measured metrics and grounding results, plus place names
@@ -182,7 +183,7 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
         if not app.state.limiter.allow(client_ip(request), "run", settings.runs_per_hour_per_ip, 3600):
             return err(429, "rate_limited", "You've reached this demo's hourly limit. Please try again later.")
         try:
-            body = CompareRequest(prompt=prompt, location=location, days=days,
+            body = CompareRequest(prompt=prompt, location=location, days=days, radius_km=radius_km,
                                   categories=[c.strip() for c in categories.split(",") if c.strip()])
         except ValueError as e:
             return err(422, "invalid_request", str(e)[:300])

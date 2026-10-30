@@ -242,7 +242,9 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
             "empty_days": [d["day"] for d in days if not d["stops"]],
         },
         "coverage": cov,
-        "suggestions": adjustments(req, cov) if planned < requested else [],
+        "suggestions": adjustments(req, cov, thin=any(
+            found.per_category[k]["returned"] < planning.picks_per_category(req, k) for k in req.categories
+            if k in found.per_category)) if planned < requested else [],
         "destination": ctx.destination,
         "drivers": drivers(ctx, [c for lst in pl["chosen"].values() for c in lst]),
         "ms": int((time.monotonic() - started) * 1000),
@@ -346,12 +348,16 @@ def coverage(per_category: dict) -> dict:
             "why_dropped": why}
 
 
-def adjustments(req: RunRequest, cov: dict) -> list[dict]:
-    """The smallest useful changes, most impactful first, from what actually removed places."""
+def adjustments(req: RunRequest, cov: dict, thin: bool = False) -> list[dict]:
+    """The smallest useful changes, most impactful first, from what actually removed places.
+
+    `thin`: some category came back from Qloo with fewer places than the plan needs, so a wider
+    search area may find more even though nothing was dropped for distance.
+    """
     why = cov["why_dropped"]
     opts = []
-    if why.get("out_of_area"):
-        opts += [(why["out_of_area"], o) for o in wider(req)]
+    if why.get("out_of_area") or thin:
+        opts += [(why.get("out_of_area", 0) or 1, o) for o in wider(req)]
     if why.get("over_budget") and req.budget:
         opts.append((why["over_budget"], {"label": "Allow any budget", "patch": {"budget": None}}))
     if why.get("no_step_free_tag") and req.step_free:

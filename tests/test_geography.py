@@ -162,3 +162,18 @@ def test_one_stop_itinerary_is_labelled_partial_with_named_legs(settings):
     assert out["from"] == back["to"] == res["origin"]["label"] and out["to"] == back["from"] == stop["name"]
     assert out["distance_kind"] == "straight_line"
     assert abs(day1["totals"]["km"] - 2 * stop["distance_km"]) < 0.05  # one stop: out and back, nothing else
+
+
+def test_thin_category_at_the_source_offers_a_wider_area(settings):
+    def handler(req):
+        resp = fixtures.handler(req)
+        p = req.url.params
+        if req.url.path == "/v2/insights" and p.get("filter.type") == "urn:entity:place" \
+                and set(CATEGORIES["culture"].tags) & set(p.get("filter.tags", "").split(",")):
+            body = json.loads(resp.content)
+            body["results"]["entities"] = body["results"]["entities"][:1]
+            return httpx.Response(200, json=body)
+        return resp
+    res = _run(settings, handler, {**BODY, "location": "Springfield", "categories": ["culture", "coffee"]})
+    assert res["summary"]["complete"] is False
+    assert res["suggestions"][0] == {"label": "Search within 40 km", "patch": {"radius_km": 40}}
