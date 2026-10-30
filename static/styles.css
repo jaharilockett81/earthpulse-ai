@@ -351,3 +351,10 @@ details.method summary { cursor: pointer; font-weight: 600; }
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
 #reveal-out, #reveal-out .panel { min-width: 0; }
 @media (max-width: 560px) { .metrics { font-size: .8rem; } .metrics td, .metrics th { padding: 6px 6px; } }
+
+.balance { margin-top: 14px; display: grid; gap: 6px; }
+.balance-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; font-size: .85rem; color: var(--ink-2); }
+.balance-row input[type=range] { width: 100%; accent-color: var(--forest); }
+.balance p { margin: 0; }
+@media (max-width: 560px) { .balance-row { grid-template-columns: 1fr 1fr; } .balance-row input[type=range] { grid-column: 1 / -1; grid-row: 1; } }
+@media (max-width: 560px) { .balance-row span:last-child { text-align: right; } }

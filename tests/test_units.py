@@ -210,3 +210,19 @@ def test_approximate_seed_needs_a_distinctive_shared_word():
     from app.agents.taste import shares_distinctive_word
     assert not shares_distinctive_word("Kinfolk magazine", "InStyle Magazine")
     assert shares_distinctive_word("Miles Davis Quintet", "Miles Davis")
+
+
+def test_balance_scales_only_the_distance_penalty():
+    from app.agents.discovery import Candidate
+    from app.agents.planning import score
+    from app.models import RunRequest
+    from app.qloo.schemas import Place
+
+    def pen(balance, prios=("low_carbon_travel",)):
+        c = Candidate(place=Place(entity_id="x", name="x", lat=0, lon=0), category="nature")
+        c.distance_km = 6.0
+        score(c, RunRequest(prompt="Amélie", location="Lisbon", balance=balance, priorities=list(prios)), 0.8)
+        return c.score_parts.get("distance_penalty", 0.0), c.score_parts["base"]
+    assert pen(0.0) == (0.0, 0.8)                      # pure taste
+    assert pen(0.5)[0] == -0.1 and pen(1.0)[0] == -0.2  # default, then double
+    assert pen(0.5, prios=())[0] == 0.0 and pen(1.0, prios=())[0] == -0.2  # slider alone turns it on

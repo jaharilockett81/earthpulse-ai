@@ -247,7 +247,7 @@ def request_summary(req: RunRequest) -> dict:
     return {"location": req.location, "origin": req.origin, "days": req.days, "budget": req.budget,
             "categories": [{"key": k, "label": CATEGORIES[k].label} for k in req.categories],
             "priorities": req.priorities, "car_free": req.car_free, "step_free": req.step_free,
-            "travelers": req.travelers}
+            "travelers": req.travelers, "balance": req.balance}
 
 
 async def run(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settings, emit: Emit | None = None,

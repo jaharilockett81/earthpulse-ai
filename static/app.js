@@ -388,6 +388,13 @@
 
   /* ------------------------------------------------------------ adjust & regenerate */
   const ADJ_TOGGLES = [["low_carbon_travel", "Low-carbon travel"], ["nature_time", "More nature"], ["plant_forward", "Plant-forward"], ["secondhand", "Secondhand"]];
+  const BALANCE_TEXT = {
+    0: "Distance ignored: ranked by Qloo taste match alone (your constraints still apply).",
+    0.25: "Distance counts half as much as usual.",
+    0.5: "Default: a small penalty per km beyond the first, capped.",
+    0.75: "Distance counts 1.5× as much as usual.",
+    1: "Distance counts double: nearer places win unless the taste gap is large.",
+  };
   function adjustPanel(res) {
     const r = res.request;
     return `<section class="panel adjust" aria-labelledby="adj-h">
@@ -402,12 +409,25 @@
         <label class="toggle"><input type="checkbox" id="adj-car" ${r.car_free ? "checked" : ""}><span>I won't drive</span></label>
         <label class="toggle"><input type="checkbox" id="adj-step" ${r.step_free ? "checked" : ""}><span>Step-free</span></label>
       </div>
+      <div class="balance">
+        <label for="adj-balance" class="h-small">How to weigh distance</label>
+        <div class="balance-row"><span>More like my taste</span>
+          <input type="range" id="adj-balance" min="0" max="1" step="0.25" value="${r.balance ?? 0.5}"
+            aria-valuetext="${BALANCE_TEXT[r.balance ?? 0.5]}"><span>Lighter footprint</span></div>
+        <p class="muted tiny" id="adj-balance-text">${BALANCE_TEXT[r.balance ?? 0.5]}</p>
+      </div>
       <div class="actions" style="margin-top:14px"><button class="btn primary small" id="adj-go">Regenerate plan</button></div>
     </section>`;
   }
   function wireAdjust(res) {
     const go = $("#adj-go");
     if (!go || !state.lastBody) { if (go) go.closest(".adjust").hidden = true; return; }
+    const bal = $("#adj-balance");
+    bal.addEventListener("input", () => {
+      const t = BALANCE_TEXT[Number(bal.value)];
+      $("#adj-balance-text").textContent = t;
+      bal.setAttribute("aria-valuetext", t);
+    });
     go.addEventListener("click", () => {
       const body = { ...state.lastBody };
       body.days = Number($("input[name=adj-days]:checked").value);
@@ -415,6 +435,7 @@
       body.priorities = $$(".adjust [data-prio]:checked").map((i) => i.dataset.prio);
       body.car_free = $("#adj-car").checked;
       body.step_free = $("#adj-step").checked;
+      body.balance = Number($("#adj-balance").value);
       startRun(body, res);
     });
   }

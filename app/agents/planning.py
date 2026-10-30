@@ -4,7 +4,7 @@ Ranks candidates and lays them out as a 1–2 day plan.
 
 Score (all weights are here, documented in docs/METHODOLOGY.md):
     score = base
-          − distance penalty      (only when "low-carbon travel" is a priority, or car-free)
+          − distance penalty × 2·balance   (when "low-carbon travel" is a priority, car-free, or balance > 0.5)
           + priority boosts       (from the place's own Qloo tags)
 
 `base` is Qloo's affinity for the user's taste (qloo mode) or plain keyword overlap with the
@@ -40,9 +40,10 @@ _SECOND = re.compile(r"thrift|vintage|second|used", re.I)
 
 def score(c: Candidate, req: RunRequest, base: float) -> None:
     parts = {"base": round(base, 3)}
-    if c.distance_km is not None and ("low_carbon_travel" in req.priorities or req.car_free):
+    if c.distance_km is not None and ("low_carbon_travel" in req.priorities or req.car_free or req.balance > 0.5):
         per, cap = (CARFREE_PER_KM, CARFREE_CAP) if req.car_free else (DIST_PER_KM, DIST_CAP)
-        pen = min(cap, max(0.0, c.distance_km - DIST_FREE_KM) * per)
+        weight = 2 * req.balance  # the taste <-> footprint slider; 1.0 at the default
+        pen = min(cap, max(0.0, c.distance_km - DIST_FREE_KM) * per) * weight
         if pen:
             parts["distance_penalty"] = -round(pen, 3)
     text = " ".join([*c.signals, *c.place.tag_names(), *c.place.keywords])
