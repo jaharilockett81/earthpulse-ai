@@ -169,6 +169,47 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
             body, client=app.state.qloo, llm=app.state.llm, settings=settings, emit=emit,
             geo_transport=app.state.geo_transport))
 
+    @app.get("/api/check")
+    async def check(request: Request, prompt: str = Query(min_length=3, max_length=400),
+                    location: str = Query(min_length=2, max_length=120),
+                    categories: str = Query(default=",".join(DEFAULT_CATEGORIES), max_length=200),
+                    days: int = Query(default=2, ge=1, le=2), compare: bool = False):
+        """Read-only, condensed run for verifying a deployment (e.g. scripts/evaluate.py --url).
+
+        Returns stage outcomes, counts, measured metrics and grounding results, plus place names
+        only as the app itself would show them. Rate-limited like /api/run.
+        """
+        if not app.state.limiter.allow(client_ip(request), "run", settings.runs_per_hour_per_ip, 3600):
+            return err(429, "rate_limited", "You've reached this demo's hourly limit. Please try again later.")
+        try:
+            body = CompareRequest(prompt=prompt, location=location, days=days,
+                                  categories=[c.strip() for c in categories.split(",") if c.strip()])
+        except ValueError as e:
+            return err(422, "invalid_request", str(e)[:300])
+        kw = dict(client=app.state.qloo, llm=app.state.llm, settings=settings, geo_transport=app.state.geo_transport)
+        started = time.monotonic()
+        try:
+            res = await (orchestrator.compare(body, **kw) if compare else orchestrator.run(body, **kw))
+        except StageFailed as e:
+            return {"ok": False, "code": e.code, "message": e.message}
+        except QlooError as e:
+            return {"ok": False, "code": e.code, "message": e.user_message}
+        out = {"ok": True, "ms": int((time.monotonic() - started) * 1000), "fixtures": res["fixtures"],
+               "stats": res["stats"], "seeds": [{k: s.get(k) for k in ("input", "name", "kind", "resolved_as")}
+                                                for s in res["seeds"]],
+               "stages": [{k: st[k] for k in ("id", "status", "ms", "detail")} for st in res["trace"]]}
+        if compare:
+            out.update(overlap=res["overlap"], metrics=res["metrics"], items=len(res["lists"]["A"]))
+        else:
+            out.update(summary=res["summary"], notes=res["notes"], grounding=res["grounding"],
+                       bridges=len(res["bridges"]), swaps=len(res["swaps"]),
+                       stops=[{"name": res["cards"][s["id"]]["name"], "category": s["category"],
+                               "affinity": res["cards"][s["id"]]["affinity"], "km": res["cards"][s["id"]]["distance_km"],
+                               "links": [l["name"] for l in res["cards"][s["id"]]["taste_links"]][:2],
+                               "has_image": bool(res["cards"][s["id"]]["image_url"])}
+                              for d in res["days"] for s in d["stops"]])
+        return out
+
     if STATIC.is_dir():
         app.mount("/static", StaticFiles(directory=STATIC), name="static")
 

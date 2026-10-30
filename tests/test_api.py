@@ -170,3 +170,11 @@ def test_evaluation_harness_runs_synthetic():
     assert len(rows) == len(mod.PERSONAS) and all("error" not in r for r in rows)
     md = mod.render(rows, agg, True)
     assert "SYNTHETIC DRY RUN" in md and "[Synthetic]" not in md  # no place names in the report
+
+
+def test_check_endpoint_condensed_run_and_compare(settings, qloo_mock):
+    c = TestClient(create_app(settings))
+    j = c.get("/api/check", params={"prompt": "Amélie and slow living", "location": "Lisbon"}).json()
+    assert j["ok"] and j["grounding"]["passed"] and j["summary"]["stops"] == 8 and "test-key" not in str(j)
+    j = c.get("/api/check", params={"prompt": "Amélie", "location": "Lisbon", "compare": "true"}).json()
+    assert j["ok"] and "qloo" in j["metrics"] and "overlap" in j
