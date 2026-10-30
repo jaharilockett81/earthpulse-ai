@@ -52,3 +52,20 @@ def attach_evidence(cands: list[Candidate], origin: dict | None, req: RunRequest
             with_dist += 1
     return {"with_distance": with_dist, "without_distance": len(cands) - with_dist,
             "with_signals": sum(1 for c in cands if c.signals)}
+
+
+def gate_by_area(cands: list[Candidate], origin: dict | None, radius_km: float) -> tuple[list[Candidate], list[Candidate]]:
+    """Split candidates into (in_area, out_of_area) by straight-line distance from the origin.
+
+    Places with no coordinates stay in (they are labelled "Not verified" later) because they
+    cannot be shown to be out of area; places with impossible coordinates are out.
+    """
+    keep, out = [], []
+    for c in cands:
+        p = c.place
+        bad = p.lat is not None and p.lon is not None and not (-90 <= p.lat <= 90 and -180 <= p.lon <= 180)
+        if bad or (origin and c.distance_km is not None and c.distance_km > radius_km):
+            out.append(c)
+        else:
+            keep.append(c)
+    return keep, out

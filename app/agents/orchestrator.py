@@ -107,11 +107,10 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
                          f"{found.relocated['to']}'s map point instead"
         st.data = {"per_category": found.per_category, "relocated": found.relocated}
     notes = list(ctx.notes)
-    for key, stat in found.per_category.items():
-        if stat.get("error"):
-            notes.append(f"{stat['label']}: {stat['error']}")
-        elif not stat["kept"]:
-            notes.append(f"No {stat['label'].lower()} passed the filters in {req.location}.")
+    if found.relocated:
+        notes.append(f"Qloo matched “{req.location}” to {found.relocated['from'] or 'an unknown place'}, which looked "
+                     f"like a different town, so places were searched within 15 km of {found.relocated['to']} "
+                     f"(geocoded by Open-Meteo).")
     cands = found.candidates
     async with trace.stage(f"evidence{tag and '_b'}", f"Attach sustainability evidence{tag}", "Sustainability") as st:
         origin = await sustainability.resolve_origin(req, found.locality, settings, transport=geo_transport)
@@ -119,9 +118,30 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
             notes.append(f"Couldn't use “{req.origin}” as a starting point (not found, or over "
                          f"{sustainability.MAX_ORIGIN_KM} km from {req.location}); distances are from the city centre.")
         ev = sustainability.attach_evidence(cands, origin, req)
+        radius = settings.discovery_radius_km
+        cands, away = sustainability.gate_by_area(cands, origin, radius)
+        for c in away:
+            stat = found.per_category[c.category] if c.category in found.per_category else None
+            if stat:
+                stat["kept"] -= 1
+                stat["dropped"] += 1
+                stat["why_dropped"]["out_of_area"] = stat["why_dropped"].get("out_of_area", 0) + 1
+        ev["out_of_area"] = len(away)
+        ev["radius_km"] = radius
         st.detail = (f"Distances from {origin['label']}" if origin else "No reference point; distances unavailable") + \
             f" · {ev['with_signals']} places with lower-impact tags"
+        if away:
+            st.detail += f" · {len(away)} places more than {radius:g} km away left out"
         st.data = ev
+    for key, stat in found.per_category.items():
+        if stat.get("error"):
+            notes.append(f"{stat['label']}: {stat['error']}")
+        elif not stat["kept"]:
+            notes.append(empty_note(stat, req.location, radius))
+    if not cands:
+        raise StageFailed("out_of_area", f"Every place Qloo found for “{req.location}” is more than {radius:g} km "
+                          f"from {origin['label'] if origin else 'the destination'}. Try a specific city "
+                          f"(for example “Portland, OR” rather than a whole state).")
     async with trace.stage(f"planning{tag and '_b'}", f"Plan your days{tag}", "Planning") as st:
         words = ctx.user_words()
         for c in cands:
@@ -253,16 +273,31 @@ async def run(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settin
                          f"from {found.get('considered', 0)} strong matches") if found["bridges"] or \
                 found.get("considered") else found.get("reason", "No strong matches near your stops")
             st.data = {"affinity_floor": found.get("affinity_floor"), "categories": found.get("categories")}
-    await check_grounding(trace, out, req, stats, ctx.seeds)
+    await check_grounding(trace, out, req, stats, ctx.seeds, radius_km=settings.discovery_radius_km)
     return {"type": "result", "run_id": run_id, "request": request_summary(req), "seeds": ctx.seeds,
             "portrait": ctx.portrait, "intent_source": ctx.intent_source, **out,
             "stats": stats.as_dict(), "trace": trace.as_list(), "fixtures": settings.fixtures_active}
 
 
+REASONS = {"out_of_area": "too far away", "other_category": "really a different kind of place",
+           "not_an_experience": "not somewhere to visit", "closed": "marked closed",
+           "over_budget": "over your budget", "no_step_free_tag": "not tagged step-free"}
+
+
+def empty_note(stat: dict, location: str, radius_km: float) -> str:
+    """Explain an empty category with the counts the run actually produced."""
+    label = stat["label"].lower()
+    if not stat["returned"]:
+        return f"Qloo returned no {label} for {location}."
+    why = ", ".join(f"{n} {REASONS.get(k, k.replace('_', ' '))}" for k, n in stat["why_dropped"].items() if n)
+    far = f" (more than {radius_km:g} km)" if stat["why_dropped"].get("out_of_area") else ""
+    return f"Qloo returned {stat['returned']} {label} for {location}, but none fit: {why}{far}."
+
+
 async def check_grounding(trace: Trace, out: dict, req: RunRequest, stats: CallStats, seeds: list[dict],
-                          suffix: str = "") -> None:
+                          suffix: str = "", radius_km: float = 25.0) -> None:
     async with trace.stage(f"grounding{suffix and '_b'}", f"Check every claim is grounded{suffix}", "Grounding") as st:
-        g = grounding.validate(out, req, stats.place_names, seeds)
+        g = grounding.validate(out, req, stats.place_names, seeds, radius_km=radius_km)
         out["grounding"] = g
         st.data = {"checks": [{k: c[k] for k in ("id", "passed")} for c in g["checks"]]}
         if not g["passed"]:
@@ -303,8 +338,8 @@ async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Se
     b = await run_mode(ctx, "baseline", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
     q.pop("_planned"), q.pop("_origin"), b.pop("_planned"), b.pop("_origin")
     q["bridges"], b["bridges"] = [], []
-    await check_grounding(trace, q, req, stats, ctx.seeds)
-    await check_grounding(trace, b, req, stats, ctx.seeds, " (baseline)")
+    await check_grounding(trace, q, req, stats, ctx.seeds, radius_km=settings.discovery_radius_km)
+    await check_grounding(trace, b, req, stats, ctx.seeds, " (baseline)", radius_km=settings.discovery_radius_km)
     ql, bl = top_list(q, n), top_list(b, n)
     words = ctx.user_words()
     q_ids, b_ids = {x["id"] for x in ql}, {x["id"] for x in bl}

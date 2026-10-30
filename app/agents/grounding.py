@@ -29,7 +29,8 @@ def _check(cid: str, passed: bool, detail: str, failures: list[str] | None = Non
     return {"id": cid, "passed": passed, "detail": detail, "failures": (failures or [])[:5]}
 
 
-def validate(result: dict, req: RunRequest, place_names: dict[str, str], seeds: list[dict]) -> dict:
+def validate(result: dict, req: RunRequest, place_names: dict[str, str], seeds: list[dict],
+             radius_km: float = 25.0) -> dict:
     cards: dict[str, dict] = result["cards"]
     planned = [s["id"] for d in result["days"] for s in d["stops"]]
     bridges = {b["id"] for b in result.get("bridges", [])}
@@ -62,6 +63,11 @@ def validate(result: dict, req: RunRequest, place_names: dict[str, str], seeds: 
     checks.append(_check("wording", not bad or repaired == len(bad),
                          "No number in an explanation is missing from its facts"
                          + (f"; {repaired} AI sentence(s) replaced with grounded text." if repaired else "."), bad))
+
+    bad = [c["name"] for c in cards.values() if c["distance_km"] is not None and c["distance_km"] > radius_km]
+    bad += [f"day {d['day']} leg {l['km']} km" for d in result["days"] for l in d["legs"] if l["km"] > 2 * radius_km]
+    checks.append(_check("geography", not bad, f"Every place is within {radius_km:g} km of the starting point "
+                         f"and no leg is longer than {2 * radius_km:g} km.", bad))
 
     bad = [c["name"] for c in cards.values() if c["distance_km"] is not None and c["trip"] !=
            trip_estimates(c["distance_km"], car_occupants=req.travelers, car_free=req.car_free)]

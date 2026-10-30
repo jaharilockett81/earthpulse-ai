@@ -28,7 +28,7 @@ def _ids(g):
 
 def test_clean_run_passes_all_checks(settings, qloo_mock):
     res, _, _ = _result(settings, qloo_mock)
-    assert all(_ids(res["grounding"]).values()) and len(res["grounding"]["checks"]) == 7
+    assert all(_ids(res["grounding"]).values()) and len(res["grounding"]["checks"]) == 8
 
 
 def test_detects_place_not_from_qloo(settings, qloo_mock):
