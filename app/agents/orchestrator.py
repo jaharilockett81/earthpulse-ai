@@ -243,7 +243,7 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
         },
         "coverage": cov,
         "suggestions": adjustments(req, cov, thin=any(
-            found.per_category[k]["returned"] < planning.picks_per_category(req, k) for k in req.categories
+            found.per_category[k]["kept"] < planning.picks_per_category(req, k) for k in req.categories
             if k in found.per_category)) if planned < requested else [],
         "destination": ctx.destination,
         "drivers": drivers(ctx, [c for lst in pl["chosen"].values() for c in lst]),
@@ -351,8 +351,8 @@ def coverage(per_category: dict) -> dict:
 def adjustments(req: RunRequest, cov: dict, thin: bool = False) -> list[dict]:
     """The smallest useful changes, most impactful first, from what actually removed places.
 
-    `thin`: some category came back from Qloo with fewer places than the plan needs, so a wider
-    search area may find more even though nothing was dropped for distance.
+    `thin`: some category has fewer usable places than the plan needs, so a wider search area may
+    find more even though nothing was dropped for distance.
     """
     why = cov["why_dropped"]
     opts = []
