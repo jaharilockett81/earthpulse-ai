@@ -60,10 +60,12 @@ _BLOCK_NAME = re.compile(r"\b(bank|atm|radio|pharmacy|hospital|clinic|school|uni
 
 # Words in Qloo place tags/keywords that relate to lower-impact choices. These are taste
 # signals Qloo returns about a place — NOT certifications — and are labelled as such.
+# Deliberately narrow: live Qloo data tags most places with area-level words like "Walkable", so
+# those are excluded to keep the signal about the place's own offering.
 LOW_IMPACT_SIGNALS = re.compile(
-    r"\b(vegan|vegetarian|plant[- ]based|organic|farm[- ]to[- ]table|local(ly)? sourced|sustainab\w*|"
-    r"eco[- ]?friendly|zero[- ]waste|thrift|vintage|second[- ]?hand|bike|bicycle|walkable|garden|"
-    r"native plants?|conservation|wildlife|nature preserve|recycl\w*|compost\w*|solar|seasonal)\b",
+    r"\b(vegan|vegetarian|plant[- ]based|organic|farm[- ]to[- ]table|locally sourced|sustainab\w*|"
+    r"eco[- ]?friendly|zero[- ]waste|thrift|vintage|second[- ]?hand|native plants?|conservation|"
+    r"nature preserve|recycl\w*|compost\w*|solar)\b",
     re.I,
 )
 STEP_FREE_TAG = "urn:tag:accessibility:place:wheelchair_accessible_entrance"
