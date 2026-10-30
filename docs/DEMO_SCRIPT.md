@@ -12,7 +12,7 @@ Say that it's cached if asked; don't hide it.
 | 55–75 s | Open “Evidence & sources” on a card; then a 🌿 Lighter swap block | “Every claim is labelled. CO2e comes from EPA factors, compared with the same trip by car. The lighter swap keeps most of the taste match and cuts the trip. Distances are straight-line lower bounds, and we say so.” |
 | 75–90 s | Adjust and regenerate: drag the slider to “Lighter footprint”, regenerate, show “Plan revised” | “You choose the trade-off. Constraints never bend; only how much distance counts.” |
 | 90–108 s | Compare with and without Qloo; rate both, reveal; three-column metrics | “Same place directory and rules. Keyword ranking and a footprint-only ranking pick almost entirely different places. Across five live personas Qloo's plans were also shorter on average, and we publish where it lost.” |
-| 108–120 s | Planner: type a whole state, “Oregon”, and run | “And it refuses to fake it: a whole state can't be a walking day, so it asks for a city instead of a 1,900 km itinerary.” |
+| 108–120 s | Planner: type a whole state, “Florida”, and run; the “Pick a city” card appears; click **West Palm Beach** | “It refuses to fake it. A state isn't a walkable day, so it asks for a city before calling Qloo, then searches only around that city. EarthPulse makes sustainability personal, practical and honest.” |
 
 ## 20-second judge explanation: why Qloo is essential
 
