@@ -1,5 +1,8 @@
 # Devpost submission text
 
+- **Live demo:** https://earthpulse-ai-plos.onrender.com (free tier; the first visit after idle can take about a minute)
+- **Code (MIT):** https://github.com/jaharilockett81/earthpulse-ai
+
 **Title:** EarthPulse AI — Your taste. A lighter footprint.
 
 **One-liner:** A Qloo-powered planning agent that builds city days matched to your cultural taste, then shows the
@@ -24,22 +27,34 @@ A **Taste Bridge** looks beyond the kinds of places you asked for and surfaces s
 hop from your plan, with the CO2e of that hop next to a separate car trip. Change any constraint and the agent
 re-plans and shows exactly what changed.
 
-A **comparison lab** runs the same request twice, once ranked by Qloo's taste graph and once by plain keyword
-matching over the very same place directory, and asks you to rate both lists blind before revealing which is which.
+A **comparison lab** runs the same request three ways over the very same place directory: ranked by Qloo's taste
+graph, by plain keyword matching, and by footprint alone. You rate the Qloo and keyword lists blind before revealing
+which is which, then see measured metrics for all three.
 
 ## How we built it
-FastAPI backend and a no-build HTML/CSS/JS frontend on Render. A deterministic eight-stage agent pipeline
-(understand → match → portrait → discover → evidence → plan → verify → explain) streams its progress live to the page
-over NDJSON. Qloo powers five of the stages: `/search` and `/v2/tags` resolve interests, tag insights build a taste
+FastAPI backend and a no-build HTML/CSS/JS frontend on Render. A deterministic ten-stage pipeline
+(understand → match → portrait → discover → evidence → plan → verify → explain → bridge → grounding check) streams its
+progress live to the page over NDJSON. Tool-using stages call Qloo and a geocoder; correctness-critical stages
+(geographic gate, scoring, verification, grounding) are pure, tested functions. Qloo powers five of the stages: `/search` and `/v2/tags` resolve interests, tag insights build a taste
 portrait, place insights with taste signals and explainability find and rank places, and the explainability scores
 power the “why”. The Qloo client is throttled under 5 req/s, cached for 24 h and retries 429s and 5xx. An optional
 LLM only parses free text and rewords facts; it never adds places or numbers.
 
-## Testing
-43 automated tests with Qloo mocked (parsing, auth failures, timeouts, 429s, ranking weights, constraint filters,
-missing evidence, orchestration, the baseline, input validation, secret leakage, health). A smoke script tests the
-live deployment, and `scripts/evaluate.py` runs five invented test personas through both rankers and reports
-aggregate metrics. _Paste live evaluation numbers here only after running it against the deployed key._
+## Testing and evaluation
+63 automated tests run in CI with Qloo mocked (Qloo's terms don't allow committing its responses). They cover
+parsing, auth failures, timeouts, 429s, ranking, constraints, geography, grounding tampering, secret leakage and
+the evaluation harness. A failure drill breaks Qloo and the LLM nine ways on purpose; all nine fail honestly.
+
+We then ran a three-arm ablation on the live deployment with real Qloo data, using five invented personas in
+Kyoto, Chicago, Lisbon, Portland and Copenhagen:
+
+- Qloo's six picks share on average fewer than one place with a keyword ranker over the same directory, and one
+  with a footprint-only ranker. Taste changes *what* you are offered.
+- Planned straight-line travel averaged 14.1 km for Qloo, 17.5 km for keyword and 14.7 km for footprint-only.
+- Qloo did not win everywhere: it lost on distance in two cities, and an automatic theme-match proxy did not
+  favour it.
+
+Five personas is a small sample, so we claim no significance; the full table is in `docs/EVALUATION.md`.
 
 ## Challenges we ran into
 - `filter.tags` behaves as a soft union, so banks and schools leak into results. We re-classify every place from its
@@ -47,6 +62,12 @@ aggregate metrics. _Paste live evaluation numbers here only after running it aga
 - Only about a third of places list a price, so we show “Price not listed” instead of guessing.
 - Making sustainability claims honest: distances are straight-line lower bounds, transit routes aren't verified, and
   tags like “vegan options” are taste signals, not certifications. The UI says exactly that.
+- Real data surprised us. “Oregon” meant the whole state, which produced a 1,900 km “day plan”. “Copenhagen”
+  matched a far smaller namesake town. “Kinfolk magazine” matched “InStyle Magazine”. Each became a deterministic
+  check:
+  - a 25 km geographic gate plus a grounding check on every leg;
+  - a retry around the geocoded city, disclosed to the user;
+  - stricter entity matching that says “not matched” instead of guessing.
 
 ## Accomplishments that we're proud of
 - An ablation built into the product that shows what Qloo's taste graph adds.

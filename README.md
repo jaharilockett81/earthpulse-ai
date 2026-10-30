@@ -31,12 +31,24 @@ The **comparison lab** proves it: it runs the same city, the same Qloo place dir
 rules, but ranks one list with your taste signals and the other with plain keyword overlap. You rate both lists blind,
 then reveal which was which, alongside measured metrics (overlap, diversity, evidence coverage, latency).
 
-## Evaluation
+## Evaluation (live Qloo)
 
-`scripts/evaluate.py` runs five fixed, clearly invented test personas through both rankers and writes aggregate
-metrics only to [docs/EVALUATION.md](docs/EVALUATION.md). **Live results are pending the Qloo key on the deployed
-server;** until then that file does not exist and no results are claimed. Neither automatic relevance proxy is
-neutral (one uses Qloo's portrait, one uses the user's words), so both are reported next to the human blind ratings.
+A three-arm ablation over five invented personas in Kyoto, Chicago, Lisbon, Portland and Copenhagen, run against the
+live deployment ([docs/EVALUATION.md](docs/EVALUATION.md)). All three arms share the same Qloo place directory,
+filters, 25 km area and carbon rules. One ranks by **Qloo taste**, one by **keyword** overlap with your words, and
+one by **footprint only** (nearest first).
+
+- Qloo changes *what* is recommended: its six picks share on average 0.8 places with the keyword list and 1.0 with
+  the footprint-only list.
+- Taste did not cost distance here: planned straight-line travel averaged 14.1 km for Qloo, 17.5 km for keyword
+  and 14.7 km for footprint-only.
+- Where Qloo did not win (theme-match proxy, two cities on distance) is reported as is.
+
+Five personas is a smoke-level sample, so no significance is claimed, and cultural relevance needs the human
+blind ratings the Comparison Lab collects. Reproduce with
+`python scripts/evaluate.py --url https://earthpulse-ai-plos.onrender.com`.
+
+Judging criteria mapped to code, tests and demo evidence: [docs/TRACEABILITY.md](docs/TRACEABILITY.md).
 
 ## Features
 
@@ -49,7 +61,11 @@ neutral (one uses Qloo's portrait, one uses the user's words), so both are repor
   which stops changed and how travel CO2e moved.
 - **Evidence drawer on every card.** Each statement carries a claim label: Listed (Qloo data), Computed (EPA math),
   Qloo signal, AI-written, or Not verified.
-- **Lighter swaps** with the CO2e difference computed from EPA factors.
+- **Lighter swaps**, shown side by side: original pick vs. a closer place that keeps most of the taste match, with
+  distance, round-trip CO2e and the taste-match difference computed the same way for both.
+- **Geographic gate.** Every stop must be within 25 km (`DISCOVERY_RADIUS_KM`) of the start, and no leg may exceed
+  50 km. A whole-state destination such as “Oregon” gets a clear “pick a city” message instead of a 1,900 km plan.
+  If Qloo matches a city name to a smaller namesake town, discovery retries around the geocoded city and says so.
 - **Priorities**: low-carbon travel, more time in nature, plant-forward food, secondhand and vintage, car-free,
   step-free entrances (from Qloo's accessibility tag).
 - **Day plans** with walk/transit legs between stops and day totals compared with driving.
@@ -87,7 +103,7 @@ flowchart LR
     T & D & TB --> Q[(Qloo Hackathon API<br/>throttled · cached · retried)]
     S --> G[(Open-Meteo geocoding)]
     E -.optional.-> L[(Anthropic API)]
-    O -. compare mode .-> B[Baseline<br/>same directory, no taste signal]
+    O -. compare mode .-> B[Baselines<br/>keyword · footprint-only<br/>same directory, no taste signal]
 ```
 
 - `app/qloo/` — throttled (≤4 req/s), cached (24 h), retrying client with typed errors; tolerant parsers; category taxonomy.
@@ -116,10 +132,10 @@ No key yet? `EARTHPULSE_DEV_FIXTURES=1 uvicorn app.main:app` serves clearly-labe
 ## Tests
 
 ```bash
-python -m pytest -q                              # 50 unit + API tests, Qloo mocked with respx
+python -m pytest -q                              # 63 unit + API tests, Qloo mocked with respx
 python scripts/failure_drill.py                   # 9 deliberate failure scenarios
 python scripts/smoke.py http://localhost:8000     # end-to-end against a running server (live test)
-python scripts/evaluate.py --out docs/EVALUATION.md   # persona evaluation (needs QLOO_API_KEY)
+python scripts/evaluate.py --url <deployment> --json eval.json   # 3-arm persona evaluation; exits 1 on a grounding failure
 ```
 
 Tests never use recorded Qloo responses: Qloo's terms don't allow publishing response data, so mocks are
@@ -135,7 +151,7 @@ The free plan sleeps when idle, so the first request after a pause can take up t
 
 ## Limitations
 
-- Distances are straight-line, so CO2e figures are lower bounds meant for comparison, not route planning.
+- Distances are straight-line, so CO2e figures are lower bounds meant for comparison, not route planning. No routing API is used and no travel times are shown.
 - EPA factors are U.S. national averages; local fleets differ.
 - Lower-impact tags are Qloo taste signals, not certifications. Opening hours are not verified.
 - Rate limiting and caching are in-memory (single instance).

@@ -1,32 +1,53 @@
-# Repository audit (Oct 30, 2026)
+# Repository audit (updated Oct 30, 2026)
 
-## Implemented and tested (mocked Qloo)
-Taste matching (search → tags fallback), taste portrait, per-category place discovery with taste signals and
-explainability, bounded adaptation for thin categories, EPA-based evidence, scoring with documented weights, day
-plans with legs, lighter swaps, verification with replacement, grounded explanations (optional validated LLM),
-Taste Bridge, grounding check, blind Qloo-vs-baseline lab with metrics, adjust-and-regenerate with a diff, persona
-evaluation harness, failure drill, NDJSON live timeline, responsive UI, per-IP rate limits, CI workflow.
+## What each "agent" actually is
 
-## Simulated / not verified
-- All Qloo traffic so far is mocked or synthetic (`app/qloo/fixtures.py`, names start with “[Synthetic]”).
-- No live evaluation numbers exist.
+EarthPulse is a deterministic, bounded pipeline of tool-using stages. We do not call it an autonomous agent loop.
 
-## Eligibility gaps
-| Requirement | Gap |
+| Stage | Kind | Tools it calls | Decision it makes |
+|---|---|---|---|
+| Intent | Rules (optional LLM, validated) | Anthropic API (optional) | Which interests are in the text |
+| Resolve | Tool-using | Qloo `/search`, `/v2/tags` | Entity vs. tag vs. "not matched"; rejects weak matches |
+| Portrait | Tool-using | Qloo `/v2/insights` (tags) | Themes and ambience your interests share |
+| Discovery | Tool-using, adaptive | Qloo `/v2/insights` (places), Open-Meteo | Re-queries a thin category once (take 50). Retries around the geocoded city when Qloo picked a namesake town. |
+| Evidence | Pure functions | Open-Meteo (start point) | Distances, EPA CO2e, area gate (25 km) |
+| Planning | Pure functions | none | Multi-objective score, day plans, lighter swaps |
+| Verification | Pure functions | none | Per-stop checks, replaces failures from ranked alternates |
+| Explanation | Rules (optional LLM, validated) | Anthropic API (optional) | Grounded "why" sentence |
+| Taste Bridge | Tool-using | Qloo `/v2/insights` (places) | Strong matches outside your categories, within 4 km of a stop |
+| Grounding | Pure functions | none | 8 checks; withholds the result on failure |
+
+Every stage logs its name, status, duration and a detail line, and streams them to the UI. Qloo calls log the
+path, status, attempt and time, never the key. Retries are bounded (3 attempts), as is adaptation (once per
+category) and relocation (once per run). Nothing loops.
+
+## Implemented and verified live
+
+- **Qloo:** search, tags, tag insights, place insights with taste signals, explainability, location query and
+  POINT + radius.
+- **Geography:** area gate and the geography grounding check.
+- **Plans:** EPA CO2e on every leg, lighter swaps, Taste Bridge.
+- **Comparison:** three-arm compare in the Comparison Lab.
+- **Diagnostics:** per-category drop reasons, `/api/check` diagnostics, CI.
+
+## Simulated
+
+- Tests and the failure drill use synthetic data (`app/qloo/fixtures.py`, names start with "[Synthetic]"). This is
+  by design: Qloo's terms do not allow committing recorded responses.
+
+## Eligibility
+
+| Requirement | Status |
 |---|---|
-| Working app using Qloo | Live Qloo unverified (no key in build env) |
-| Public functional demo | Not deployed |
-| Public repo + license | Repo not created (license ready) |
-| Description | Drafted in DEVPOST.md; needs live URL + repo URL |
+| Working app using Qloo | Met: live, verified |
+| Public functional demo | Met: https://earthpulse-ai-plos.onrender.com |
+| Public repo + license | Met: MIT |
+| Description | `docs/DEVPOST.md` |
 
-## Risks
-1. **Live schema drift** (highest): field names come from the hackathon guide and other entrants' probes. Parsers are
-   tolerant and tests cover variants, but only a live run proves it. Mitigation: smoke test immediately after deploy.
-2. **Render free-tier cold start** (~1 min): warm the URL before judging windows; note it in the README.
-3. **Qloo quota/rate limits**: ~15–20 calls per run, 24 h cache, 4 req/s throttle, 20 runs/hour/IP.
-4. **Thin cities**: some categories may return few places; adaptation + notes handle it honestly.
+## Remaining risks
 
-## Priorities
-- **P0 (required):** repo, deploy, key, live smoke test, fix any schema issues, Devpost text with URLs.
-- **P1 (high value):** live persona evaluation into EVALUATION.md, real screenshots, README live link.
-- **P2 (optional):** demo video, certification data, routing distances.
+1. **Render free-tier cold start (~1 min).** Open the URL before judging.
+2. **Qloo rate limits.** 12–22 calls per run (a compare reuses cached calls), 24 h cache, 4 req/s throttle,
+   per-IP run limits.
+3. **City coverage varies in Qloo.** Thin categories are explained with counts, never filled with invented places.
+4. **Straight-line distances.** These are lower bounds, labelled as such.

@@ -13,17 +13,17 @@ Only what those pages state. None of them names benchmark methodology, so none i
 
 **Takeaways we used:** winners turned Qloo into a decision, not a list (GeoTaste, Alloy); a specific audience beats “everyone”; and a visible, polished UI matters. **Where they were thin:** evidence for claims, and proof that Qloo, not the LLM, was doing the work. EarthPulse leans into both.
 
-## Gap analysis against the brief (as of Oct 29)
+## Gap analysis against the brief (updated Oct 30)
 
 | Requirement | Status |
 |---|---|
-| Working agentic app using Qloo | Built; deterministic 9-stage pipeline with real tool calls. **Live Qloo not yet exercised (no key in this environment).** |
-| Public demo | **Blocked on Jahari:** Render deploy + `QLOO_API_KEY` |
-| Public repo + license | MIT license ready. **Blocked on Jahari:** creating the GitHub repo |
+| Working agentic app using Qloo | Built and verified live on the deployment (10 stages) |
+| Public demo | Live at https://earthpulse-ai-plos.onrender.com |
+| Public repo + license | https://github.com/jaharilockett81/earthpulse-ai (MIT) |
 | Setup instructions, description | README, METHODOLOGY, DEVPOST drafted |
 | Cultural DNA, Decision Studio, evidence inspector, comparison lab, agent activity | Built |
 | Revise plan when a constraint changes | Built (adjust panel + “what changed”) |
-| Reproducible persona evaluation | Harness built (`scripts/evaluate.py`); **live results pending key** |
+| Reproducible persona evaluation | Live three-arm results in `docs/EVALUATION.md` |
 | Taste Bridge | Built |
 | Official certifications / destination policies as evidence | Not built: no verifiable, licensable source found in time. Unverified things are labelled “Not verified”. |
 | Demo video | Optional per rules; script in `docs/DEMO_SCRIPT.md` |
