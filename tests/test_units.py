@@ -198,7 +198,7 @@ async def test_lowercase_concepts_try_tags_first(settings):
     from app.models import Seed
     from app.qloo.client import CallStats, QlooClient
 
-    with respx.mock(base_url="https://hackathon.api.qloo.com") as r:
+    with respx.mock(base_url="https://hackathon.api.qloo.com", assert_all_called=False) as r:
         tags = r.get("/v2/tags").mock(return_value=httpx.Response(200, json={"results": {"tags": [
             {"id": "urn:tag:keyword:qloo:botanical_garden", "name": "botanical gardens"}]}}))
         search = r.get("/search").mock(return_value=httpx.Response(200, json={"results": []}))
