@@ -133,7 +133,7 @@ No key yet? `EARTHPULSE_DEV_FIXTURES=1 uvicorn app.main:app` serves clearly-labe
 ## Tests
 
 ```bash
-python -m pytest -q                              # 67 unit + API tests, Qloo mocked with respx
+python -m pytest -q                              # 68 unit + API tests, Qloo mocked with respx
 python scripts/failure_drill.py                   # 9 deliberate failure scenarios
 python scripts/smoke.py http://localhost:8000     # end-to-end against a running server (live test)
 python scripts/evaluate.py --url <deployment> --json eval.json   # 3-arm persona evaluation; exits 1 on a grounding failure

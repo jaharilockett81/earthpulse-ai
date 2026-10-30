@@ -29,9 +29,24 @@ deployment. Nothing is extrapolated.
 | Every place "lower-impact" | Area-level tags such as "Walkable" counted as a place signal | Narrowed the signal list to the place's own offering |
 | Empty category with no explanation | "No museums & culture passed the filters" did not say why | Each category records returned, kept and dropped counts with reasons (out of area, other category, duplicate, closed, budget, step-free). Notes quote those counts. A test checks every returned place is accounted for. |
 
+## Live West Palm Beach, FL check (Oct 30, 08:55 UTC)
+
+Request: "Lana Del Rey, vintage film", 2 days, parks, museums, cafés and restaurants. Both interests were
+matched in Qloo.
+
+- **25 km (default):** 7 of 8 stops, labelled partial.
+  - Qloo returned 62 places around the city point and 58 fit; 4 were duplicates.
+  - Museums & culture had only 2 places, one of them a duplicate.
+  - Every leg names its ends and starts from "West Palm Beach city centre".
+  - 45.7 km straight-line, 1.76 kg CO2e vs. 8.48 kg by car. Grounding 8/8.
+- **40 km (the offered option):** 8 of 8 stops, complete.
+  - Farthest stop 13.8 km from the centre.
+  - 55.1 km straight-line, 2.11 kg vs. 10.23 kg by car. Grounding 8/8.
+- **"Florida":** refused with city choices before any Qloo call.
+
 ## Automated tests (mocked Qloo, no key)
 
-`python -m pytest -q` → **67 passed** (Oct 30). This includes:
+`python -m pytest -q` → **68 passed** (Oct 30). This includes:
 
 - `tests/test_geography.py`:
   - "Florida", "Oregon" and "Florida, USA" ask for a city before any Qloo call; the geocoder's "Floridablanca" for "Florida" is never used;
