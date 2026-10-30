@@ -1,4 +1,4 @@
-# Demo script (90–120 s)
+# Demo script (about 2 minutes)
 
 Record against the **live Render URL with the real Qloo key**, never in synthetic mode. Warm the server first (open
 `/api/health`), and do one throwaway run of the demo request so Qloo responses are cached and the take is smooth.
@@ -6,13 +6,13 @@ Say that it's cached if asked; don't hide it.
 
 | Time | Screen | Say |
 |---|---|---|
-| 0–15 s | Landing page | “Most recommendation platforms understand what we like. Few help us connect those interests to more sustainable decisions. EarthPulse does both.” |
-| 15–35 s | Planner: type *Studio Ghibli*, pick it from Qloo autocomplete; add *botanical gardens* (becomes a Qloo taste tag), *independent coffee*; city Kyoto | “These are real Qloo entities and tags. Qloo connects taste across film, music, books and places.” |
-| 35–65 s | Build my plan: watch the agent timeline; land on “Your culture-inspired weekend is ready.” Point at Cultural DNA, then a stop card | “Each step is a real backend event: matching, taste portrait, one Qloo place call per category, evidence, planning, verification. Here's which of my interests drove the plan, from Qloo's explainability.” |
-| 65–85 s | Open “Evidence & sources” on a card; then a lighter swap or the Taste Bridge | “Every claim is labelled. CO2e comes from EPA emission factors, with the formula and limits right here. Distances are straight-line lower bounds, and opening hours aren't verified, and we say so.” |
-| 85–105 s | Back to planner → Compare with and without Qloo; rate both, reveal; metrics table | “Same place directory, same rules. Only the taste signal differs. Rate blind, then reveal. Our persona evaluation is in the README.” |
-| 100–105 s | Scroll to the Grounding check panel | “Before anything is shown, a deterministic check proves every place came from Qloo in this run and every number recomputes.” |
-| 105–120 s | Adjust: tick “I won't drive”, regenerate, show “Plan revised” | “Change a constraint and the agent re-plans and shows what changed. EarthPulse makes sustainability personal, practical, and culturally relevant.” |
+| 0–12 s | Landing page | “Cultural recommendations ignore what it costs to get there. Sustainable ones ignore who you are. EarthPulse does both.” |
+| 12–30 s | Planner: type *Studio Ghibli*, pick it from Qloo autocomplete; add *Japanese architecture*, *botanical gardens*; city Kyoto | “These are real Qloo entities and taste tags. Qloo connects taste across film, music, books and places.” |
+| 30–55 s | Build my plan: watch the agent timeline; land on the plan. Point at Cultural DNA, then a stop card | “Each step is a real backend event: one Qloo place call per category, a 25 km area check, evidence, planning, verification. Here's which of my interests drove each pick, from Qloo's explainability.” |
+| 55–75 s | Open “Evidence & sources” on a card; then a 🌿 Lighter swap block | “Every claim is labelled. CO2e comes from EPA factors, compared with the same trip by car. The lighter swap keeps most of the taste match and cuts the trip. Distances are straight-line lower bounds, and we say so.” |
+| 75–90 s | Adjust and regenerate: drag the slider to “Lighter footprint”, regenerate, show “Plan revised” | “You choose the trade-off. Constraints never bend; only how much distance counts.” |
+| 90–108 s | Compare with and without Qloo; rate both, reveal; three-column metrics | “Same place directory and rules. Keyword ranking and a footprint-only ranking pick almost entirely different places. Across five live personas Qloo's plans were also shorter on average, and we publish where it lost.” |
+| 108–120 s | Planner: type a whole state, “Oregon”, and run | “And it refuses to fake it: a whole state can't be a walking day, so it asks for a city instead of a 1,900 km itinerary.” |
 
 ## 20-second judge explanation: why Qloo is essential
 
