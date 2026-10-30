@@ -34,7 +34,8 @@ def bridge_categories(req: RunRequest) -> list[str]:
 
 
 async def find_bridges(client: QlooClient, req: RunRequest, *, seed_ids: list[str], seed_tags: list[str],
-                       planned: list[Candidate], origin: dict | None, stats: CallStats) -> dict:
+                       planned: list[Candidate], origin: dict | None, stats: CallStats,
+                       center: dict | None = None) -> dict:
     keys = bridge_categories(req)
     anchors = [c for c in planned if c.place.lat is not None and c.place.lon is not None]
     affs = [c.place.affinity for c in planned if c.place.affinity is not None]
@@ -43,7 +44,9 @@ async def find_bridges(client: QlooClient, req: RunRequest, *, seed_ids: list[st
     floor = round(median(affs) - BRIDGE_AFFINITY_SLACK, 3)
     tags = [t for k in keys for t in CATEGORIES[k].tags]
     places, _ = await client.place_insights(location_query=req.location, seed_ids=seed_ids, seed_tags=seed_tags,
-                                            tags=tags, price_max=req.budget, take=25, stats=stats)
+                                            tags=tags, price_max=req.budget, take=25, stats=stats,
+                                            point=(center["lat"], center["lon"]) if center else None,
+                                            radius_m=int(req.radius_km * 1000))
     planned_ids = {c.id for c in planned}
     out, used_cats, considered = [], set(), 0
     for p in sorted(places, key=lambda p: p.affinity or 0, reverse=True):

@@ -22,23 +22,26 @@ MAX_ORIGIN_KM = 60  # a starting point further than this from the destination is
 
 
 async def resolve_origin(req: RunRequest, locality: Locality | None, settings: Settings,
-                         transport=None) -> dict | None:
+                         transport=None, destination: dict | None = None) -> dict | None:
+    """The point every distance is measured from, always named so no route has an unstated origin.
+
+    Order: the user's own starting point (if it geocodes within MAX_ORIGIN_KM of the destination), then
+    the validated city centre, then Qloo's point for the name (labelled as Qloo's, not as a city centre).
+    """
+    center = destination if destination and destination.get("status") == "city" else None
+    ref = center or (locality.model_dump() if locality and locality.lat is not None and locality.lon is not None else None)
     if req.origin and not settings.fixtures_active:  # synthetic places have synthetic coordinates
         got = await geocode(req.origin, settings.geocode_url, transport=transport)
-        far = got and locality and locality.lat is not None and locality.lon is not None and \
-            haversine_km(got["lat"], got["lon"], locality.lat, locality.lon) > MAX_ORIGIN_KM
+        far = got and ref and haversine_km(got["lat"], got["lon"], ref["lat"], ref["lon"]) > MAX_ORIGIN_KM
         if got and not far:
             return {**got, "kind": "geocoded", "source": GEOCODE_SOURCE}
-    if locality and locality.lat is not None and locality.lon is not None:
-        # Qloo's locality point can be an administrative centroid (Kyoto's sits in the northern
-        # mountains), so prefer the geocoded town centre when it agrees with Qloo's locality.
-        if not settings.fixtures_active:
-            town = await geocode(req.location, settings.geocode_url, transport=transport)
-            if town and haversine_km(town["lat"], town["lon"], locality.lat, locality.lon) <= MAX_ORIGIN_KM:
-                return {**town, "label": f"{town['name']} city centre", "kind": "city_centre", "source": GEOCODE_SOURCE}
-        return {"name": locality.name, "label": f"{locality.name} city centre", "lat": locality.lat,
-                "lon": locality.lon, "kind": "city_centre",
-                "source": {"name": "Qloo resolved locality centroid", "url": None}}
+    if center:
+        return {"name": center["name"], "label": f"{center['name']} city centre", "lat": center["lat"],
+                "lon": center["lon"], "kind": "city_centre", "source": GEOCODE_SOURCE}
+    if ref:
+        return {"name": locality.name, "label": f"Qloo's map point for {locality.name}", "lat": locality.lat,
+                "lon": locality.lon, "kind": "qloo_locality",
+                "source": {"name": "Qloo resolved locality point", "url": None}}
     return None
 
 

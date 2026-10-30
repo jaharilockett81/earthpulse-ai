@@ -14,14 +14,12 @@ import asyncio
 from dataclasses import dataclass, field
 
 from ..models import RunRequest
-from ..qloo.client import CallStats, QlooClient, QlooError
-from ..evidence.geo import haversine_km
+from ..qloo.client import CallStats, QlooBadRequest, QlooClient, QlooError
 from ..qloo.schemas import Locality, Place
 from ..qloo.taxonomy import CATEGORIES, classify, has_step_free_tag, is_blocked, low_impact_signals
 
 TAKE_PER_CATEGORY = 20
 ADAPT_TAKE = 50  # one wider re-query for a category that came back too thin (bounded: at most once)
-MISMATCH_KM = 60  # Qloo's locality this far from the geocoded city means Qloo picked a different town
 
 
 @dataclass
@@ -47,7 +45,7 @@ class DiscoveryResult:
     locality: Locality | None
     per_category: dict[str, dict]
     errors: list[QlooError]
-    relocated: dict | None = None
+    constrained: bool = False  # True when Qloo was queried around the geocoded city point
 
 
 def _drop_reason(place: Place, req: RunRequest) -> str | None:
@@ -64,35 +62,30 @@ def _drop_reason(place: Place, req: RunRequest) -> str | None:
 
 
 async def discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str], seed_tags: list[str],
-                   stats: CallStats, use_signals: bool = True, town: dict | None = None) -> DiscoveryResult:
-    """`town` is the geocoded destination ({name, lat, lon}); see the relocation step below."""
-    found = await _discover(client, req, seed_ids=seed_ids, seed_tags=seed_tags, stats=stats,
-                            use_signals=use_signals)
-    if not town:
-        return found
-    loc = found.locality
-    far = loc is None or loc.lat is None or loc.lon is None or \
-        haversine_km(loc.lat, loc.lon, town["lat"], town["lon"]) > MISMATCH_KM
-    need = sum(1 if k == "stay" else req.days for k in req.categories)
-    if not far or len(found.candidates) >= need:
-        return found
-    # Qloo's name lookup can pick a namesake (live, "Copenhagen" resolved to a town with one
-    # restaurant). Retry once around the geocoded city point; keep whichever result is larger.
-    try:
-        moved = await _discover(client, req, seed_ids=seed_ids, seed_tags=seed_tags, stats=stats,
-                                use_signals=use_signals, point=(town["lat"], town["lon"]))
-    except QlooError:
-        return found
-    if len(moved.candidates) <= len(found.candidates):
-        return found
-    moved.locality = Locality(entity_id="geocoded", name=town["name"], lat=town["lat"], lon=town["lon"])
-    moved.relocated = {"from": loc.name if loc else None, "to": town["name"]}
-    return moved
+                   stats: CallStats, use_signals: bool = True, center: dict | None = None) -> DiscoveryResult:
+    """`center` is the validated, geocoded destination city ({name, lat, lon}).
+
+    With a center, Qloo is asked only for places within the user's radius of it (`filter.location`
+    POINT + `filter.location.radius`), so geography is constrained at the source. Without one (the
+    geocoder couldn't confirm the city), Qloo resolves the name itself and the area gate filters after.
+    """
+    if center:
+        try:
+            found = await _discover(client, req, seed_ids=seed_ids, seed_tags=seed_tags, stats=stats,
+                                    use_signals=use_signals, point=(center["lat"], center["lon"]),
+                                    radius_m=int(req.radius_km * 1000))
+            found.locality = Locality(entity_id="geocoded", name=center["name"], lat=center["lat"], lon=center["lon"])
+            found.constrained = True
+            return found
+        except QlooBadRequest:  # point search refused: fall back to Qloo's name lookup + the area gate
+            pass
+    return await _discover(client, req, seed_ids=seed_ids, seed_tags=seed_tags, stats=stats,
+                           use_signals=use_signals)
 
 
 async def _discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str], seed_tags: list[str],
                     stats: CallStats, use_signals: bool = True,
-                    point: tuple[float, float] | None = None) -> DiscoveryResult:
+                    point: tuple[float, float] | None = None, radius_m: int = 25000) -> DiscoveryResult:
     async def one(key: str, take: int = TAKE_PER_CATEGORY):
         cat = CATEGORIES[key]
         return await client.place_insights(
@@ -105,6 +98,7 @@ async def _discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str],
             explain=use_signals,
             stats=stats,
             point=point,
+            radius_m=radius_m,
         )
 
     results = await asyncio.gather(*[one(k) for k in req.categories], return_exceptions=True)

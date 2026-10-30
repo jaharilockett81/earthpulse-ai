@@ -19,9 +19,9 @@ Emit = Callable[[dict], Awaitable[None]]
 class StageFailed(Exception):
     """Raised when a required stage cannot complete; the run stops with an honest error."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, **extra):
         super().__init__(message)
-        self.code, self.message = code, message
+        self.code, self.message, self.extra = code, message, extra
 
 
 class Stage:

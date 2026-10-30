@@ -45,8 +45,6 @@ class Settings:
     llm_timeout_s: float = field(default_factory=lambda: _float("LLM_TIMEOUT_S", 15.0))
 
     # Geocoding for an optional "starting from" point (Open-Meteo, no key).
-    # Places further than this (straight line) from the trip's starting point are out of area.
-    discovery_radius_km: float = field(default_factory=lambda: float(os.getenv("DISCOVERY_RADIUS_KM", "25")))
     geocode_url: str = field(default_factory=lambda: os.getenv("GEOCODE_URL", "https://geocoding-api.open-meteo.com/v1/search"))
 
     # Abuse protection for the public demo.

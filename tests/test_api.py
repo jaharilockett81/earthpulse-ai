@@ -29,7 +29,7 @@ def test_run_streams_all_stages_and_result(settings, qloo_mock):
     assert r.status_code == 200 and r.headers["content-type"].startswith("application/x-ndjson")
     evs = events(r)
     done = [e["stage"]["id"] for e in evs if e["type"] == "stage" and e["stage"]["status"] == "done"]
-    assert done == ["intent", "resolve", "portrait", "discovery", "evidence", "planning", "verification", "explanation", "bridge", "grounding"]
+    assert done == ["destination", "intent", "resolve", "portrait", "discovery", "evidence", "planning", "verification", "explanation", "bridge", "grounding"]
     res = evs[-1]
     assert res["type"] == "result"
     assert len(res["days"]) == 2 and res["summary"]["stops"] == 8
@@ -181,50 +181,42 @@ def test_check_endpoint_condensed_run_and_compare(settings, qloo_mock):
     assert j["ok"] and "qloo" in j["metrics"] and "overlap" in j
 
 
-def test_city_centre_prefers_geocoded_town_point(settings, qloo_mock, monkeypatch):
-    from app.agents import sustainability
-    from app.qloo import fixtures
-
-    lat0, lon0 = fixtures._centroid("Lisbon")
-
-    async def fake_geocode(name, url, **kw):
-        return {"name": "Lisbon", "lat": lat0 + 0.05, "lon": lon0, "label": "Lisbon, Lisbon, Portugal"}
-
-    monkeypatch.setattr(sustainability, "geocode", fake_geocode)
-    res = events(TestClient(create_app(settings)).post("/api/run", json=BODY))[-1]
-    assert res["origin"]["label"] == "Lisbon city centre" and res["origin"]["source"]["name"].startswith("Open-Meteo")
-    assert abs(res["origin"]["lat"] - (lat0 + 0.05)) < 1e-9
+def _city(name, lat, lon, **kw):
+    async def fake_geocode(q, url, **k):
+        return {"name": name, "lat": lat, "lon": lon, "label": f"{name}, Region, Country", "admin1": "Region",
+                "country": "Country", "country_code": "XX", "feature_code": "PPLA", "population": 100000, **kw}
+    return fake_geocode
 
 
-def test_discovery_relocates_when_qloo_picks_a_namesake_town(settings, monkeypatch):
-    """Live, Qloo resolved "Copenhagen" to a town with one restaurant. A geocoded point retry fixes it."""
+def test_discovery_is_constrained_around_the_validated_city(settings, monkeypatch):
+    """Qloo is asked for places around the geocoded city (POINT + radius), never by a bare name."""
     import httpx
     import respx
 
     from app.agents import sustainability
+    from app.evidence import destination
     from app.qloo import fixtures
 
-    lat0, lon0 = fixtures._centroid("Anytown")
-
-    async def fake_geocode(name, url, **kw):
-        return {"name": "Copenhagen", "lat": lat0, "lon": lon0, "label": "Copenhagen, Denmark"}
+    fake = _city("Lisbon", 38.72, -9.14)
+    monkeypatch.setattr(destination, "geocode", fake)
+    monkeypatch.setattr(sustainability, "geocode", fake)
+    seen = []
 
     def handler(req):
         p = req.url.params
-        if req.url.path == "/v2/insights" and p.get("filter.type") == "urn:entity:place" \
-                and "filter.location.query" in p:
-            return httpx.Response(200, json={"results": {"entities": []}})
-        if "filter.location" in p:
-            assert p["filter.location"] == f"POINT({lon0} {lat0})" and p["filter.location.radius"] == "15000"
+        if req.url.path == "/v2/insights" and p.get("filter.type") == "urn:entity:place":
+            seen.append(p)
         return fixtures.handler(req)
 
-    monkeypatch.setattr(sustainability, "geocode", fake_geocode)
-    with respx.mock(base_url=BASE, assert_all_called=False) as r:
+    with respx.mock(base_url="https://hackathon.api.qloo.com", assert_all_called=False) as r:
         r.route().mock(side_effect=handler)
-        res = events(TestClient(create_app(settings)).post("/api/run", json={**BODY, "location": "Copenhagen"}))[-1]
-    assert res["type"] == "result" and res["summary"]["stops"] >= 4
-    disc = next(s for s in res["trace"] if s["id"] == "discovery")
-    assert disc["data"]["relocated"]["to"] == "Copenhagen" and "different town" in disc["detail"]
+        res = events(TestClient(create_app(settings)).post("/api/run", json={**BODY, "radius_km": 40}))[-1]
+    assert res["type"] == "result" and seen
+    assert all(p["filter.location"] == "POINT(-9.14 38.72)" and p["filter.location.radius"] == "40000"
+               and "filter.location.query" not in p for p in seen)
+    assert res["origin"]["label"] == "Lisbon city centre" and res["origin"]["source"]["name"].startswith("Open-Meteo")
+    assert res["destination"]["status"] == "city" and res["destination"]["country_code"] == "XX"
+    assert all(c["distance_km"] <= 40 for c in res["cards"].values() if c["distance_km"] is not None)
 
 
 def test_compare_includes_footprint_only_arm(settings, qloo_mock):

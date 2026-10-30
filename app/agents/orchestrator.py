@@ -19,6 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from ..config import Settings
+from ..evidence import destination
 from ..llm import LLM
 from ..models import RunRequest
 from ..qloo.client import CallStats, QlooClient
@@ -34,6 +35,11 @@ class Context:
     portrait: dict = field(default_factory=lambda: {"taste": [], "ambience": []})
     intent_source: str = "form"
     notes: list[str] = field(default_factory=list)
+    destination: dict | None = None
+
+    @property
+    def center(self) -> dict | None:
+        return self.destination if self.destination and self.destination.get("status") == "city" else None
 
     @property
     def seed_ids(self) -> list[str]:
@@ -47,8 +53,40 @@ class Context:
         return baseline.words([s["input"] for s in self.seeds] + [self.req.prompt or ""])
 
 
-async def prepare(req: RunRequest, client: QlooClient, llm: LLM, trace: Trace, stats: CallStats) -> Context:
+async def resolve_destination(ctx: Context, settings: Settings, trace: Trace, geo_transport=None) -> None:
+    """Stage 0: the destination must be a city. Runs before any Qloo call."""
+    req = ctx.req
+    async with trace.stage("destination", "Find your destination", "Geography") as st:
+        if settings.fixtures_active and not destination.region_of(req.location):
+            ctx.destination = {"status": "synthetic", "input": req.location}
+            st.detail = "Synthetic mode: using the synthetic city"
+            return
+        d = await destination.resolve(req.location, settings.geocode_url, transport=geo_transport)
+        ctx.destination = d
+        if d["status"] == "region":
+            raise StageFailed(
+                "needs_city", f"“{d['name']}” is a whole region, and EarthPulse plans walkable city days. "
+                              f"Pick a city, for example {', '.join(d['suggestions'][:-1])} or {d['suggestions'][-1]}."
+                if len(d["suggestions"]) > 1 else f"“{d['name']}” is a whole region. Pick a city, for example "
+                                                  f"{d['suggestions'][0]}.",
+                suggestions=[{"label": c, "patch": {"location": c}} for c in d["suggestions"]])
+        if d["status"] == "city":
+            st.detail = (f"{d['label']} ({d['lat']:.3f}, {d['lon']:.3f}) · searching within {req.radius_km} km "
+                         f"of the city centre")
+        else:
+            st.detail = f"Couldn't confirm “{req.location}” on the map ({d['reason']}); using Qloo's match for the name"
+            ctx.notes.append(f"Couldn't confirm “{req.location}” as a city on the map ({d['reason']}). Places come from "
+                             f"Qloo's own match for the name and are limited to {req.radius_km} km from Qloo's point "
+                             f"for it.")
+        st.data = {k: d.get(k) for k in ("status", "name", "admin1", "country", "country_code", "feature_code",
+                                          "lat", "lon", "reason")}
+
+
+async def prepare(req: RunRequest, client: QlooClient, llm: LLM, trace: Trace, stats: CallStats,
+                  settings: Settings | None = None, geo_transport=None) -> Context:
     ctx = Context(req=req)
+    if settings is not None:
+        await resolve_destination(ctx, settings, trace, geo_transport)
     async with trace.stage("intent", "Understand your request", "Taste Intelligence") as st:
         seeds, ctx.intent_source = await taste.parse_intent(req, llm)
         if not seeds:
@@ -90,10 +128,8 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
     started = time.monotonic()
     tag, sfx = {"qloo": ("", ""), "baseline": (" (baseline)", "_b"), "green": (" (footprint-only)", "_g")}[mode]
     async with trace.stage(f"discovery{sfx}", f"Discover places{tag}", "Discovery") as st:
-        town = None if settings.fixtures_active else \
-            await sustainability.geocode(req.location, settings.geocode_url, transport=geo_transport)
         found = await discovery.discover(client, req, seed_ids=ctx.seed_ids, seed_tags=ctx.seed_tags,
-                                         stats=stats, use_signals=(mode == "qloo"), town=town)
+                                         stats=stats, use_signals=(mode == "qloo"), center=ctx.center)
         if not found.candidates:
             raise StageFailed("no_places", f"Qloo returned no matching places in {req.location} for those categories."
                               + (" The step-free filter may be too strict there." if req.step_free else ""))
@@ -102,23 +138,19 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
         adapted = [v["label"] for v in found.per_category.values() if v.get("adapted")]
         if adapted:
             st.detail += f" · too few {', '.join(a.lower() for a in adapted)} passed your filters, so it searched wider once"
-        if found.relocated:
-            st.detail += f" · Qloo's match for “{req.location}” was a different town, so it searched around " \
-                         f"{found.relocated['to']}'s map point instead"
-        st.data = {"per_category": found.per_category, "relocated": found.relocated}
+        st.detail += f" · Qloo asked for places within {req.radius_km} km of the city centre" if found.constrained \
+            else " · Qloo matched the name itself; far places are filtered next"
+        st.data = {"per_category": found.per_category, "constrained": found.constrained}
     notes = list(ctx.notes)
-    if found.relocated:
-        notes.append(f"Qloo matched “{req.location}” to {found.relocated['from'] or 'an unknown place'}, which looked "
-                     f"like a different town, so places were searched within 15 km of {found.relocated['to']} "
-                     f"(geocoded by Open-Meteo).")
     cands = found.candidates
     async with trace.stage(f"evidence{sfx}", f"Attach sustainability evidence{tag}", "Sustainability") as st:
-        origin = await sustainability.resolve_origin(req, found.locality, settings, transport=geo_transport)
+        origin = await sustainability.resolve_origin(req, found.locality, settings, transport=geo_transport,
+                                                     destination=ctx.destination)
         if req.origin and (not origin or origin["kind"] != "geocoded"):
             notes.append(f"Couldn't use “{req.origin}” as a starting point (not found, or over "
                          f"{sustainability.MAX_ORIGIN_KM} km from {req.location}); distances are from the city centre.")
         ev = sustainability.attach_evidence(cands, origin, req)
-        radius = settings.discovery_radius_km
+        radius = req.radius_km
         cands, away = sustainability.gate_by_area(cands, origin, radius)
         for c in away:
             stat = found.per_category[c.category] if c.category in found.per_category else None
@@ -140,8 +172,8 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
             notes.append(empty_note(stat, req.location, radius))
     if not cands:
         raise StageFailed("out_of_area", f"Every place Qloo found for “{req.location}” is more than {radius:g} km "
-                          f"from {origin['label'] if origin else 'the destination'}. Try a specific city "
-                          f"(for example “Portland, OR” rather than a whole state).")
+                          f"from {origin['label'] if origin else 'the destination'}. Search a wider area, or try a "
+                          f"different city.", suggestions=wider(req), coverage=coverage(found.per_category))
     async with trace.stage(f"planning{sfx}", f"Plan your days{tag}", "Planning") as st:
         words = ctx.user_words()
         for c in cands:
@@ -177,6 +209,13 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
         src = await explanation.explain(picked_cards, llm, use_llm and mode == "qloo")
         st.detail = "AI-reworded from grounded facts" if src == "ai" else "Written from grounded facts"
     days = pl["days"]
+    requested = sum(planning.picks_per_category(req, k) for k in req.categories)
+    planned = sum(len(d["stops"]) for d in days)
+    short = [CATEGORIES[k].label for k in req.categories if len(pl["chosen"].get(k, [])) < planning.picks_per_category(req, k)]
+    cov = coverage(found.per_category)
+    if planned < requested:
+        notes.insert(0, f"Partial plan: {planned} of the {requested} stops you asked for. Qloo returned {cov['returned']} "
+                        f"places; {cov['kept']} fit your city, area and filters. Short on: {', '.join(short)}.")
     car_total = None if req.car_free else round(sum(d["totals"]["car_kg_co2e"] or 0 for d in days), 2)
     low_total = round(sum(d["totals"]["suggested_kg_co2e"] for d in days), 2)
     return {
@@ -197,8 +236,14 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
             "car_kg_co2e": car_total,
             "saved_kg_co2e": round(car_total - low_total, 2) if car_total is not None else None,
             "swaps": len(pl["swaps"]),
-            "complete": all(d["totals"]["complete"] for d in days),
+            "complete": all(d["totals"]["complete"] for d in days) and planned >= requested,
+            "requested_stops": requested,
+            "evidence_complete": all(d["totals"]["complete"] for d in days),
+            "empty_days": [d["day"] for d in days if not d["stops"]],
         },
+        "coverage": cov,
+        "suggestions": adjustments(req, cov) if planned < requested else [],
+        "destination": ctx.destination,
         "drivers": drivers(ctx, [c for lst in pl["chosen"].values() for c in lst]),
         "ms": int((time.monotonic() - started) * 1000),
         "_planned": [c for lst in pl["chosen"].values() for c in lst],
@@ -247,7 +292,7 @@ def request_summary(req: RunRequest) -> dict:
     return {"location": req.location, "origin": req.origin, "days": req.days, "budget": req.budget,
             "categories": [{"key": k, "label": CATEGORIES[k].label} for k in req.categories],
             "priorities": req.priorities, "car_free": req.car_free, "step_free": req.step_free,
-            "travelers": req.travelers, "balance": req.balance}
+            "travelers": req.travelers, "balance": req.balance, "radius_km": req.radius_km}
 
 
 async def run(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settings, emit: Emit | None = None,
@@ -255,14 +300,14 @@ async def run(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settin
     run_id = uuid.uuid4().hex[:12]
     trace = Trace(run_id, emit)
     stats = CallStats()
-    ctx = await prepare(req, client, llm, trace, stats)
+    ctx = await prepare(req, client, llm, trace, stats, settings, geo_transport)
     out = await run_mode(ctx, req.mode, client, llm, settings, trace, stats, geo_transport=geo_transport)
     planned, origin = out.pop("_planned"), out.pop("_origin")
     out["bridges"] = []
     if req.mode == "qloo" and ctx.seed_ids + ctx.seed_tags:
         async with trace.stage("bridge", "Look for a Taste Bridge", "Taste Bridge", required=False) as st:
             found = await bridge.find_bridges(client, req, seed_ids=ctx.seed_ids, seed_tags=ctx.seed_tags,
-                                              planned=planned, origin=origin, stats=stats)
+                                              planned=planned, origin=origin, stats=stats, center=ctx.center)
             for b in found["bridges"]:
                 c = b.pop("candidate")
                 facts, meta = explanation.facts_for(c, ctx.seeds, ctx.portrait, origin, "qloo")
@@ -274,10 +319,48 @@ async def run(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settin
                          f"from {found.get('considered', 0)} strong matches") if found["bridges"] or \
                 found.get("considered") else found.get("reason", "No strong matches near your stops")
             st.data = {"affinity_floor": found.get("affinity_floor"), "categories": found.get("categories")}
-    await check_grounding(trace, out, req, stats, ctx.seeds, radius_km=settings.discovery_radius_km)
+    await check_grounding(trace, out, req, stats, ctx.seeds, radius_km=req.radius_km)
     return {"type": "result", "run_id": run_id, "request": request_summary(req), "seeds": ctx.seeds,
             "portrait": ctx.portrait, "intent_source": ctx.intent_source, **out,
             "stats": stats.as_dict(), "trace": trace.as_list(), "fixtures": settings.fixtures_active}
+
+
+RADII = (25, 40, 60)
+
+
+def wider(req: RunRequest) -> list[dict]:
+    """Offer (never apply) the next search radius; the user decides."""
+    nxt = [r for r in RADII if r > req.radius_km]
+    return [{"label": f"Search within {nxt[0]} km", "patch": {"radius_km": nxt[0]}}] if nxt else []
+
+
+def coverage(per_category: dict) -> dict:
+    """Totals across categories, straight from the run's own counts."""
+    why: dict[str, int] = {}
+    for stat in per_category.values():
+        for k, n in stat.get("why_dropped", {}).items():
+            why[k] = why.get(k, 0) + n
+    return {"returned": sum(v["returned"] for v in per_category.values()),
+            "kept": sum(v["kept"] for v in per_category.values()),
+            "failed_categories": [v["label"] for v in per_category.values() if v.get("error")],
+            "why_dropped": why}
+
+
+def adjustments(req: RunRequest, cov: dict) -> list[dict]:
+    """The smallest useful changes, most impactful first, from what actually removed places."""
+    why = cov["why_dropped"]
+    opts = []
+    if why.get("out_of_area"):
+        opts += [(why["out_of_area"], o) for o in wider(req)]
+    if why.get("over_budget") and req.budget:
+        opts.append((why["over_budget"], {"label": "Allow any budget", "patch": {"budget": None}}))
+    if why.get("no_step_free_tag") and req.step_free:
+        opts.append((why["no_step_free_tag"], {"label": "Include places without a step-free tag",
+                                                "patch": {"step_free": False}}))
+    out = [o for _, o in sorted(opts, key=lambda x: -x[0])]
+    if req.days == 2:
+        out.append({"label": "Make it a 1-day plan", "patch": {"days": 1}})
+    return out
 
 
 REASONS = {"out_of_area": "too far away", "other_category": "really a different kind of place",
@@ -336,7 +419,7 @@ async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Se
     run_id = uuid.uuid4().hex[:12]
     trace = Trace(run_id, emit)
     stats = CallStats()
-    ctx = await prepare(req, client, llm, trace, stats)
+    ctx = await prepare(req, client, llm, trace, stats, settings, geo_transport)
     q = await run_mode(ctx, "qloo", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
     b = await run_mode(ctx, "baseline", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
     # Ablation arm C: same candidate pool as the baseline (cached Qloo calls), ranked by footprint only.
@@ -344,9 +427,9 @@ async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Se
     for x in (q, b, g):
         x.pop("_planned"), x.pop("_origin")
         x["bridges"] = []
-    await check_grounding(trace, q, req, stats, ctx.seeds, radius_km=settings.discovery_radius_km)
-    await check_grounding(trace, b, req, stats, ctx.seeds, " (baseline)", radius_km=settings.discovery_radius_km)
-    await check_grounding(trace, g, req, stats, ctx.seeds, " (footprint-only)", radius_km=settings.discovery_radius_km)
+    await check_grounding(trace, q, req, stats, ctx.seeds, radius_km=req.radius_km)
+    await check_grounding(trace, b, req, stats, ctx.seeds, " (baseline)", radius_km=req.radius_km)
+    await check_grounding(trace, g, req, stats, ctx.seeds, " (footprint-only)", radius_km=req.radius_km)
     ql, bl, gl = top_list(q, n), top_list(b, n), top_list(g, n)
     words = ctx.user_words()
     q_ids, b_ids = {x["id"] for x in ql}, {x["id"] for x in bl}

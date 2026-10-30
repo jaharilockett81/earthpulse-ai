@@ -54,6 +54,8 @@ class RunRequest(BaseModel):
     days: Literal[1, 2] = 2
     # 0 = rank purely by taste, 0.5 = default, 1 = distance counts double. Never relaxes a hard constraint.
     balance: float = Field(default=0.5, ge=0.0, le=1.0)
+    # How far from the city centre a stop may be. Only the user widens it (the app offers 40 / 60 km).
+    radius_km: Literal[25, 40, 60] = 25
     mode: Literal["qloo", "baseline", "green"] = "qloo"
 
     @field_validator("location", "origin", "prompt")

@@ -42,14 +42,15 @@ def _run(settings, handler, body):
         return events(TestClient(create_app(settings)).post("/api/run", json=body))[-1]
 
 
-def test_statewide_destination_keeps_only_in_area_stops(settings):
-    body = {**BODY, "location": "Oregon", "prompt": "Patagonia, Bon Iver and pottery"}
+def test_spread_out_qloo_results_keep_only_in_area_stops(settings):
+    # The geocoder can't confirm this name, so Qloo's own name lookup is used and the area gate filters after.
+    body = {**BODY, "location": "Springfield", "prompt": "Patagonia, Bon Iver and pottery"}
     res = _run(settings, _shifting(lambda p, i: i % 2 == 1), body)
     assert res["type"] == "result"
     stops = [res["cards"][s["id"]] for d in res["days"] for s in d["stops"]]
     assert stops and all(c["distance_km"] is not None and c["distance_km"] <= 25 for c in stops)
     assert all(leg["km"] <= 50 for d in res["days"] for leg in d["legs"])
-    assert res["summary"]["km"] < 200  # the bug produced 1,924 km
+    assert res["summary"]["km"] < 200  # the Oregon bug produced 1,924 km
     ev = next(s for s in res["trace"] if s["id"] == "evidence")
     assert ev["data"]["out_of_area"] > 0 and "left out" in ev["detail"]
     assert {c["id"]: c["passed"] for c in res["grounding"]["checks"]}["geography"] is True
@@ -61,13 +62,15 @@ def test_category_with_only_far_places_explains_itself(settings):
     res = _run(settings, _shifting(lambda p, i: bool(museum_tags & set(p.get("filter.tags", "").split(",")))), body)
     assert res["type"] == "result"
     assert all(res["cards"][s["id"]]["category"] != "culture" for d in res["days"] for s in d["stops"])
-    note = next(n for n in res["notes"] if "museums" in n.lower())
-    assert note.startswith("Qloo returned ") and "too far away (more than 25 km)" in note
+    note = next(n for n in res["notes"] if n.startswith("Qloo returned ") and "museums" in n.lower())
+    assert "too far away (more than 25 km)" in note
 
 
-def test_everything_out_of_area_fails_honestly(settings):
-    res = _run(settings, _shifting(lambda p, i: True), {**BODY, "location": "Oregon"})
-    assert res["type"] == "error" and res["code"] == "out_of_area" and "Portland, OR" in res["message"]
+def test_zero_eligible_venues_fails_honestly_with_counts_and_an_offer(settings):
+    res = _run(settings, _shifting(lambda p, i: True), {**BODY, "location": "Springfield"})
+    assert res["type"] == "error" and res["code"] == "out_of_area"
+    assert res["suggestions"] == [{"label": "Search within 40 km", "patch": {"radius_km": 40}}]
+    assert res["coverage"]["kept"] == 0 and res["coverage"]["why_dropped"]["out_of_area"] > 0
 
 
 def test_gate_rejects_impossible_coordinates_and_keeps_unknown():
@@ -91,7 +94,71 @@ def test_grounding_flags_far_place_if_one_slips_through(settings, qloo_mock):
 
 
 def test_every_returned_place_is_accounted_for(settings):
-    res = _run(settings, _shifting(lambda p, i: i % 3 == 0), {**BODY, "location": "Oregon"})
+    res = _run(settings, _shifting(lambda p, i: i % 3 == 0), {**BODY, "location": "Springfield"})
     disc = next(s for s in res["trace"] if s["id"] == "discovery")
     for stat in disc["data"]["per_category"].values():
         assert stat["returned"] == stat["kept"] + stat["dropped"] == stat["kept"] + sum(stat["why_dropped"].values())
+
+
+
+# ---------------------------------------------------------------- destination resolution (Florida regression)
+
+def _count_qloo(settings, body):
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        return fixtures.handler(req)
+    return _run(settings, handler, body), calls
+
+
+def test_state_only_destination_asks_for_a_city_before_any_qloo_call(settings):
+    for loc in ("Florida", "florida", "Florida, USA", "Oregon"):
+        res, calls = _count_qloo(settings, {**BODY, "location": loc})
+        assert res["type"] == "error" and res["code"] == "needs_city", loc
+        assert calls == []
+    res, _ = _count_qloo(settings, {**BODY, "location": "Florida"})
+    labels = [s["label"] for s in res["suggestions"]]
+    assert "West Palm Beach" in labels and res["suggestions"][0]["patch"] == {"location": labels[0]}
+
+
+def test_city_names_that_contain_a_region_are_not_refused():
+    from app.evidence.destination import region_of
+    assert region_of("West Palm Beach, FL") is None and region_of("Portland, OR") is None
+    assert region_of("New York") is None and region_of("Washington, DC") is None
+    assert region_of("Oregon")[1][0] == "Portland, OR"
+
+
+async def test_geocoder_mismatch_is_not_used_as_a_substitute(monkeypatch):
+    from app.evidence import destination
+
+    async def floridablanca(q, url, **k):  # what Open-Meteo really returns for "Florida"
+        return {"name": "Floridablanca", "lat": 7.06, "lon": -73.09, "label": "Floridablanca, Santander, Colombia",
+                "feature_code": "PPLA2"}
+
+    async def a_state(q, url, **k):
+        return {"name": "Narnia", "lat": 1.0, "lon": 1.0, "label": "Narnia", "feature_code": "ADM1"}
+
+    monkeypatch.setattr(destination, "geocode", floridablanca)
+    d = await destination.resolve("Floridia", "u")
+    assert d["status"] == "unconfirmed" and "Floridablanca" in d["reason"]
+    monkeypatch.setattr(destination, "geocode", a_state)
+    assert (await destination.resolve("Narnia", "u"))["status"] == "unconfirmed"
+
+
+def test_one_stop_itinerary_is_labelled_partial_with_named_legs(settings):
+    keep_cafes = lambda p, i: not ("cafe" in p.get("filter.tags", "") and i == 0)  # noqa: E731
+    body = {**BODY, "location": "Springfield", "categories": ["coffee", "culture"], "days": 2}
+    res = _run(settings, _shifting(keep_cafes), body)
+    s = res["summary"]
+    assert res["type"] == "result" and s["stops"] == 1 and s["requested_stops"] == 4 and s["complete"] is False
+    assert s["empty_days"] == [2]
+    assert any(n.startswith("Partial plan: 1 of the 4 stops") for n in res["notes"])
+    assert {"label": "Search within 40 km", "patch": {"radius_km": 40}} in res["suggestions"]
+    day1, day2 = res["days"]
+    assert day2["legs"] == [] and day2["totals"]["km"] == 0
+    stop = res["cards"][day1["stops"][0]["id"]]
+    out, back = day1["legs"]
+    assert out["from"] == back["to"] == res["origin"]["label"] and out["to"] == back["from"] == stop["name"]
+    assert out["distance_kind"] == "straight_line"
+    assert abs(day1["totals"]["km"] - 2 * stop["distance_km"]) < 0.05  # one stop: out and back, nothing else

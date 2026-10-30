@@ -132,7 +132,7 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
                 result = await work(emit)
                 await queue.put(result)
             except StageFailed as e:
-                await queue.put({"type": "error", "code": e.code, "message": e.message})
+                await queue.put({"type": "error", "code": e.code, "message": e.message, **e.extra})
             except QlooError as e:
                 await queue.put({"type": "error", "code": e.code, "message": e.user_message})
             except Exception:  # noqa: BLE001
@@ -191,7 +191,7 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
         try:
             res = await (orchestrator.compare(body, **kw) if compare else orchestrator.run(body, **kw))
         except StageFailed as e:
-            return {"ok": False, "code": e.code, "message": e.message}
+            return {"ok": False, "code": e.code, "message": e.message, **e.extra}
         except QlooError as e:
             return {"ok": False, "code": e.code, "message": e.user_message}
         out = {"ok": True, "ms": int((time.monotonic() - started) * 1000), "fixtures": res["fixtures"],
@@ -205,6 +205,13 @@ def create_app(settings: Settings | None = None, qloo: QlooClient | None = None,
                        grounding=res["grounding"], items=len(res["lists"]["A"]))
         else:
             out.update(summary=res["summary"], notes=res["notes"], grounding=res["grounding"],
+                       destination={k: res["destination"].get(k) for k in ("status", "name", "admin1", "country_code",
+                                                                           "feature_code", "lat", "lon")}
+                       if res.get("destination") else None,
+                       origin=res["origin"] and res["origin"]["label"], coverage=res["coverage"],
+                       suggestions=res["suggestions"],
+                       legs=[{"day": d["day"], "from": l["from"], "to": l["to"], "km": l["km"]}
+                             for d in res["days"] for l in d["legs"]],
                        bridges=len(res["bridges"]), swaps=len(res["swaps"]),
                        stops=[{"name": res["cards"][s["id"]]["name"], "category": s["category"],
                                "affinity": res["cards"][s["id"]]["affinity"], "km": res["cards"][s["id"]]["distance_km"],

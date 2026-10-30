@@ -265,9 +265,33 @@
     $("#results-main").innerHTML = `<div class="panel"><h2>No plan yet</h2><p class="muted">Tell us what you love and where you're going.</p><a class="btn primary" href="#/plan">Start planning</a></div>`;
   }
 
+  function suggestionButtons(list) {
+    if (!list || !list.length || !state.lastBody) return "";
+    return `<div class="fixes" role="group" aria-label="Ways to continue">${list.map((x, i) =>
+      `<button class="btn ghost small" data-sugg="${i}">${esc(x.label)}</button>`).join("")}</div>`;
+  }
+  function wireSuggestions(el, list) {
+    $$("[data-sugg]", el).forEach((b) => b.addEventListener("click", () => {
+      const patch = list[Number(b.dataset.sugg)].patch;
+      startRun({ ...state.lastBody, ...patch }, null);
+    }));
+  }
+
   function renderError(el, ev) {
-    el.innerHTML = `<div class="error-card" role="alert"><h2>We couldn't finish this plan</h2><p>${esc(ev.message)}</p>
+    const title = ev.code === "needs_city" ? "Pick a city" : "We couldn't finish this plan";
+    el.innerHTML = `<div class="error-card" role="alert"><h2>${title}</h2><p>${esc(ev.message)}</p>
+      ${coverageLine(ev.coverage)}
+      ${suggestionButtons(ev.suggestions)}
       <a class="btn ghost small" href="#/plan">Adjust and try again</a></div>`;
+    wireSuggestions(el, ev.suggestions || []);
+  }
+
+  const DROP_TEXT = { out_of_area: "outside the search area", duplicate: "duplicates", other_category: "a different kind of place",
+    not_an_experience: "not somewhere to visit", closed: "closed", over_budget: "over budget", no_step_free_tag: "no step-free tag" };
+  function coverageLine(cov) {
+    if (!cov) return "";
+    const why = Object.entries(cov.why_dropped || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${DROP_TEXT[k] || k.replace(/_/g, " ")}`);
+    return `<p class="muted tiny">Qloo returned ${cov.returned} places; ${cov.kept} fit.${why.length ? ` Left out: ${esc(why.join(", "))}.` : ""}${cov.failed_categories && cov.failed_categories.length ? ` Couldn't load: ${esc(cov.failed_categories.join(", "))}.` : ""}</p>`;
   }
 
   function seedChips(seeds) {
@@ -292,11 +316,12 @@
     main.innerHTML = `
       <div class="res-head">
         <p class="eyebrow">${esc(res.request.location)} · ${esc(res.request.days)}-day plan · ${esc(cats)}</p>
-        <h1>Your culture-inspired ${res.request.days > 1 ? "weekend" : "day"} is ready.</h1>
+        <h1>${s.stops >= s.requested_stops ? `Your culture-inspired ${res.request.days > 1 ? "weekend" : "day"} is ready.` : `A partial plan: ${s.stops} of ${s.requested_stops} stops.`}</h1>
         <div class="seeds">${seedChips(res.seeds)}</div>
       </div>
       ${diff}
       ${notes.length ? `<div class="notes"><ul>${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></div>` : ""}
+      ${s.stops < s.requested_stops ? `<div class="panel partial">${coverageLine(res.coverage)}<p class="tiny">Nothing has been changed for you. Choose an option to re-plan:</p>${suggestionButtons(res.suggestions)}</div>` : ""}
       <div class="stats">
         <div class="stat"><div class="v">${s.stops}</div><div class="l">stops, each verified</div></div>
         <div class="stat"><div class="v">${fmt(s.km)} km</div><div class="l">straight-line, all legs ${claim("computed")}</div></div>
@@ -329,6 +354,7 @@
     $("#alts").addEventListener("click", (e) => { const b = e.target.closest(".alt"); if (b) openEvidence(res.cards[b.dataset.id], res); });
     $$("[data-open]", $(".bridge-list") || document.createElement("div")).forEach((b) => b.addEventListener("click", () => openEvidence(res.cards[b.dataset.open], res)));
     wireAdjust(res);
+    wireSuggestions(main, res.suggestions || []);
     drawMap(res);
   }
 
@@ -465,6 +491,7 @@
     });
     const back = day.legs[day.stops.length];
     if (back) out.push(legRow(back, "back to start"));
+    if (!day.stops.length) out.push(`<li class="empty-day muted">No stop qualified for day ${n}, so there is no travel to estimate. See the options above to widen the plan.</li>`);
     $("#stops").innerHTML = out.join("");
     $$("#stops [data-open]").forEach((b) => b.addEventListener("click", () => openEvidence(res.cards[b.dataset.open], res)));
     highlightDay(n);
@@ -472,7 +499,7 @@
 
   function legRow(leg, label) {
     const icon = leg.mode === "walk" ? "🚶" : "🚌";
-    return `<li class="leg">${icon} ${esc(leg.label)} ${fmt(leg.km)} km ${esc(label)} · ${fmt(leg.kg_co2e, 2)} kg CO2e${leg.car_kg_co2e != null ? ` (car ${fmt(leg.car_kg_co2e, 2)})` : ""}</li>`;
+    return `<li class="leg">${icon} ${esc(leg.label)} ${fmt(leg.km)} km ${leg.from ? `<span class="muted">${esc(leg.from)} → ${esc(leg.to)}, straight line</span>` : esc(label)} · ${fmt(leg.kg_co2e, 2)} kg CO2e${leg.car_kg_co2e != null ? ` (car ${fmt(leg.car_kg_co2e, 2)})` : ""}</li>`;
   }
 
   function tripKg(card, mode) {

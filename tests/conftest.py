@@ -20,7 +20,7 @@ def settings():
 def _no_real_geocoding(monkeypatch):
     """Tests never reach the real geocoder (CI has internet; results would leak between tests)."""
     from app.agents import sustainability
-    from app.evidence import geo
+    from app.evidence import destination, geo
 
     geo._CACHE.clear()
 
@@ -28,6 +28,7 @@ def _no_real_geocoding(monkeypatch):
         return None
 
     monkeypatch.setattr(sustainability, "geocode", none)
+    monkeypatch.setattr(destination, "geocode", none)
 
 
 @pytest.fixture

@@ -114,14 +114,16 @@ def build_days(req: RunRequest, chosen: dict[str, list[Candidate]], origin: dict
                 stops.append(lst[d])
         stops.sort(key=lambda c: DAYPART_ORDER[CATEGORIES[c.category].daypart])
         legs, km, low, car = [], 0.0, 0.0, 0.0
-        points = [origin] if origin else []
-        points += [{"lat": c.place.lat, "lon": c.place.lon} for c in stops]
-        if origin:
-            points.append(origin)
+        # Every leg names both ends: start -> stops in daypart order -> back to start.
+        start = {"name": origin["label"], "lat": origin["lat"], "lon": origin["lon"]} if origin else None
+        points = [{"name": c.place.name, "lat": c.place.lat, "lon": c.place.lon} for c in stops]
+        if start and points:
+            points = [start, *points, start]
         coords_ok = all(p.get("lat") is not None and p.get("lon") is not None for p in points)
         if coords_ok and len(points) > 1:
             for a, b in zip(points, points[1:]):
                 leg = leg_estimate(haversine_km(a["lat"], a["lon"], b["lat"], b["lon"]), req.travelers, req.car_free)
+                leg.update({"from": a["name"], "to": b["name"], "distance_kind": "straight_line"})
                 legs.append(leg)
                 km += leg["km"]
                 low += leg["kg_co2e"]

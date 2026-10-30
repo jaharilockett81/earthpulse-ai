@@ -358,3 +358,8 @@ details.method summary { cursor: pointer; font-weight: 600; }
 .balance p { margin: 0; }
 @media (max-width: 560px) { .balance-row { grid-template-columns: 1fr 1fr; } .balance-row input[type=range] { grid-column: 1 / -1; grid-row: 1; } }
 @media (max-width: 560px) { .balance-row span:last-child { text-align: right; } }
+
+.fixes { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.panel.partial { border: 1px solid var(--lime); background: #f7faf2; }
+.panel.partial p { margin: 4px 0; }
+.empty-day { list-style: none; padding: 14px; border: 1px dashed var(--sage); border-radius: 12px; }

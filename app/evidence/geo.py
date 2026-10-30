@@ -61,7 +61,9 @@ async def geocode(name: str, url: str, timeout_s: float = 6.0,
     except (KeyError, TypeError, ValueError):
         return None
     label = ", ".join(str(p) for p in (pick.get("name"), pick.get("admin1"), pick.get("country")) if p)
-    out = {"name": pick.get("name", head), "lat": lat, "lon": lon, "label": label}
+    out = {"name": pick.get("name", head), "lat": lat, "lon": lon, "label": label,
+           "admin1": pick.get("admin1"), "country": pick.get("country"), "country_code": pick.get("country_code"),
+           "feature_code": pick.get("feature_code"), "population": pick.get("population")}
     if len(_CACHE) < 500:
         _CACHE[key] = out
     return out

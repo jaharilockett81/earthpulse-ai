@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 
 import httpx
 
@@ -45,6 +46,10 @@ def _json(data: dict) -> httpx.Response:
 def _places(p: httpx.QueryParams) -> dict:
     city = p.get("filter.location.query", "Anytown")
     lat0, lon0 = _centroid(city)
+    m = re.match(r"POINT\(\s*(-?[\d.]+)\s+(-?[\d.]+)\s*\)", p.get("filter.location", ""))
+    if m:  # search around a point (Qloo's filter.location); same synthetic places, centred there
+        lon0, lat0 = float(m.group(1)), float(m.group(2))
+        city = f"{lat0:.3f},{lon0:.3f}"
     tags = [t for t in p.get("filter.tags", "").split(",") if t]
     seeds = [s for s in p.get("signal.interests.entities", "").split(",") if s]
     sig_tags = [s for s in p.get("signal.interests.tags", "").split(",") if s]
