@@ -454,6 +454,29 @@
     return `<li class="leg">${icon} ${esc(leg.label)} ${fmt(leg.km)} km ${esc(label)} · ${fmt(leg.kg_co2e, 2)} kg CO2e${leg.car_kg_co2e != null ? ` (car ${fmt(leg.car_kg_co2e, 2)})` : ""}</li>`;
   }
 
+  function tripKg(card, mode) {
+    const m = card.trip && card.trip.modes.find((x) => x.mode === mode);
+    return m ? m.kg_co2e : null;
+  }
+
+  function swapCompare(c, alt, swap) {
+    const mode = swap.compared_mode;
+    const both = c.affinity != null && alt.affinity != null;
+    const side = (card, label, cls) => `<div class="swap-side ${cls}">
+        <div class="k">${label}</div><b>${esc(card.name)}</b>
+        <dl><div><dt>Taste match</dt><dd>${both ? card.affinity.toFixed(2) : "—"}</dd></div>
+          <div><dt>Distance</dt><dd>${fmt(card.distance_km)} km</dd></div>
+          <div><dt>Round trip by ${esc(mode)}</dt><dd>${tripKg(card, mode) != null ? `${fmt(tripKg(card, mode), 2)} kg` : "Unavailable"}</dd></div></dl>
+      </div>`;
+    return `<div class="swap" role="group" aria-label="Lighter swap for ${esc(c.name)}">
+      <div class="swap-head">🌿 <b>Lighter swap</b> ${claim("computed")}</div>
+      <div class="swap-grid">${side(c, "Original pick", "from")}<span class="swap-arrow" aria-hidden="true">→</span>${side(alt, "Lighter swap", "to")}</div>
+      <p class="tiny">${fmt(swap.km_closer)} km closer, saving ${fmt(swap.kg_co2e_saved, 2)} kg CO2e round trip by ${esc(mode)}.
+        ${both ? `Taste match ${swap.base_gap > 0 ? `drops by ${fmt(swap.base_gap, 3)}` : "is the same or higher"} (both scored by Qloo for the same interests).` : "Taste scores are not comparable here."}
+        Straight-line estimate; same EPA factors for both.</p>
+      <button class="linkish" data-open="${esc(alt.id)}">Why it still fits your taste</button></div>`;
+  }
+
   function placeCard(c, slot, res) {
     if (!c) return "";
     const img = safeUrl(c.image_url);
@@ -476,9 +499,7 @@
           ${c.step_free ? `<span>♿ step-free entrance</span>` : ""}
           <button class="linkish" data-open="${esc(c.id)}">Evidence &amp; sources</button>
         </div>
-        ${alt ? `<div class="swap">🌿 <span><b>Lighter swap:</b> ${esc(alt.name)} is ${fmt(swap.km_closer)} km closer and nearly as strong a match
-          (−${fmt(swap.base_gap, 3)}). Saves ${fmt(swap.kg_co2e_saved, 2)} kg CO2e round trip by ${esc(swap.compared_mode)}.</span> ${claim("computed")}
-          <button class="linkish" data-open="${esc(alt.id)}">See it</button></div>` : ""}
+        ${alt ? swapCompare(c, alt, swap) : ""}
       </div></article></li>`;
   }
 
