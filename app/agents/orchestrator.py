@@ -23,7 +23,7 @@ from ..llm import LLM
 from ..models import RunRequest
 from ..qloo.client import CallStats, QlooClient
 from ..qloo.taxonomy import CATEGORIES
-from . import baseline, bridge, discovery, explanation, planning, sustainability, taste, verification
+from . import baseline, bridge, discovery, grounding, explanation, planning, sustainability, taste, verification
 from .trace import Emit, StageFailed, Trace
 
 
@@ -97,6 +97,9 @@ async def run_mode(ctx: Context, mode: str, client: QlooClient, llm: LLM, settin
                               + (" The step-free filter may be too strict there." if req.step_free else ""))
         st.detail = f"{len(found.candidates)} places across {len(req.categories)} categories" + \
             (" with your taste signals" if mode == "qloo" else " without taste signals")
+        adapted = [v["label"] for v in found.per_category.values() if v.get("adapted")]
+        if adapted:
+            st.detail += f" · too few {', '.join(a.lower() for a in adapted)} passed your filters, so it searched wider once"
         st.data = {"per_category": found.per_category}
     notes = list(ctx.notes)
     for key, stat in found.per_category.items():
@@ -245,9 +248,24 @@ async def run(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Settin
                          f"from {found.get('considered', 0)} strong matches") if found["bridges"] or \
                 found.get("considered") else found.get("reason", "No strong matches near your stops")
             st.data = {"affinity_floor": found.get("affinity_floor"), "categories": found.get("categories")}
+    await check_grounding(trace, out, req, stats, ctx.seeds)
     return {"type": "result", "run_id": run_id, "request": request_summary(req), "seeds": ctx.seeds,
             "portrait": ctx.portrait, "intent_source": ctx.intent_source, **out,
             "stats": stats.as_dict(), "trace": trace.as_list(), "fixtures": settings.fixtures_active}
+
+
+async def check_grounding(trace: Trace, out: dict, req: RunRequest, stats: CallStats, seeds: list[dict],
+                          suffix: str = "") -> None:
+    async with trace.stage(f"grounding{suffix and '_b'}", f"Check every claim is grounded{suffix}", "Grounding") as st:
+        g = grounding.validate(out, req, stats.place_names, seeds)
+        out["grounding"] = g
+        st.data = {"checks": [{k: c[k] for k in ("id", "passed")} for c in g["checks"]]}
+        if not g["passed"]:
+            failed = [c for c in g["checks"] if not c["passed"]]
+            st.detail = "Failed: " + "; ".join(f"{c['id']} ({', '.join(c['failures'][:2])})" for c in failed)
+            raise StageFailed("grounding_failed", "A result failed our grounding checks, so we're not showing it. "
+                                                  "Please try again or adjust your request.")
+        st.detail = f"{len(g['checks'])} checks passed" + (f", {g['repaired']} AI sentence(s) repaired" if g["repaired"] else "")
 
 
 def top_list(result: dict, n: int = 6) -> list[dict]:
@@ -279,6 +297,9 @@ async def compare(req: RunRequest, *, client: QlooClient, llm: LLM, settings: Se
     q = await run_mode(ctx, "qloo", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
     b = await run_mode(ctx, "baseline", client, llm, settings, trace, stats, use_llm=False, geo_transport=geo_transport)
     q.pop("_planned"), q.pop("_origin"), b.pop("_planned"), b.pop("_origin")
+    q["bridges"], b["bridges"] = [], []
+    await check_grounding(trace, q, req, stats, ctx.seeds)
+    await check_grounding(trace, b, req, stats, ctx.seeds, " (baseline)")
     ql, bl = top_list(q, n), top_list(b, n)
     words = ctx.user_words()
     q_ids, b_ids = {x["id"] for x in ql}, {x["id"] for x in bl}

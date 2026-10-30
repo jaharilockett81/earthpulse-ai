@@ -314,6 +314,7 @@
       ${bridgePanel(res)}
       <section><h2 class="h-small">More options</h2><div class="alts" id="alts"></div></section>
       ${adjustPanel(res)}
+      ${groundingPanel(res)}
       <p class="muted tiny">Origin: ${res.origin ? esc(res.origin.label) : "unknown"}. ${res.explanation_source === "ai" ? "Explanations reworded by AI from grounded facts." : "Explanations written from grounded facts."} Travel figures are straight-line lower bounds from EPA factors.</p>`;
     $$(".day-tabs .seg-btn", main).forEach((b) => b.addEventListener("click", () => {
       $$(".day-tabs .seg-btn", main).forEach((x) => x.setAttribute("aria-selected", String(x === b)));
@@ -329,6 +330,17 @@
     $$("[data-open]", $(".bridge-list") || document.createElement("div")).forEach((b) => b.addEventListener("click", () => openEvidence(res.cards[b.dataset.open], res)));
     wireAdjust(res);
     drawMap(res);
+  }
+
+  /* ------------------------------------------------------------ grounding report */
+  function groundingPanel(res) {
+    const g = res.grounding;
+    if (!g) return "";
+    const ok = g.checks.filter((c) => c.passed).length;
+    return `<details class="panel grounding"><summary><span class="ok">✓</span> Grounding check: ${ok} of ${g.checks.length} passed
+      <span class="muted tiny">· a deterministic audit of everything on this page before it was shown</span></summary>
+      <ul class="checks">${g.checks.map((c) => `<li><span class="${c.passed ? "ok" : "bad"}">${c.passed ? "✓" : "✗"}</span>
+        <span><b>${esc(c.id)}</b>: ${esc(c.detail)}</span></li>`).join("")}</ul></details>`;
   }
 
   /* ------------------------------------------------------------ cultural DNA */

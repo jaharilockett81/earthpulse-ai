@@ -108,6 +108,9 @@ main { max-width: 1240px; margin: 0 auto; padding: clamp(20px, 4vw, 48px) clamp(
 .node { position: absolute; background: #fff; border-radius: 999px; padding: 8px 14px; font-weight: 600; font-size: .9rem; box-shadow: var(--shadow); white-space: nowrap; }
 .node.leaf { background: var(--lime); }
 .n1 { top: 6%; left: 8%; } .n2 { top: 22%; right: -2%; } .n3 { bottom: 18%; left: -4%; } .n4 { bottom: 4%; right: 6%; }
+.steps20 { list-style: none; padding: 0; margin: 0 0 22px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.steps20 li { display: flex; gap: 12px; align-items: flex-start; background: var(--mist); border-radius: var(--radius); padding: 14px 16px; font-size: .95rem; }
+.steps20 b { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--forest); color: var(--lime); display: grid; place-items: center; font-family: var(--serif); }
 .pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .pillars article, .card-block, .panel { background: var(--card); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow); }
 .pillars p { margin: 0; color: var(--ink-2); }
@@ -256,6 +259,10 @@ input:focus, textarea:focus { border-color: var(--forest); outline: none; box-sh
 .metrics td:nth-child(n+2), .metrics th:nth-child(n+2) { width: 18%; text-align: right; }
 .metrics th:first-child { width: auto; }
 
+.grounding summary { cursor: pointer; font-weight: 600; }
+.grounding .checks { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; font-size: .9rem; }
+.grounding .checks li { display: flex; gap: 8px; }
+
 /* ---------- drawer ---------- */
 .drawer { position: fixed; inset: 0; z-index: 40; }
 .drawer-scrim { position: absolute; inset: 0; background: rgba(32,40,36,.45); }
@@ -315,7 +322,7 @@ details.method summary { cursor: pointer; font-weight: 600; }
   .dna-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
-  .pillars, .grid2, .grid3 { grid-template-columns: 1fr; }
+  .pillars, .grid2, .grid3, .steps20 { grid-template-columns: 1fr; }
   .place { grid-template-columns: 1fr; }
   .place .img { min-height: 120px; }
   .place .body { padding: 0 14px 14px; }

@@ -29,7 +29,7 @@ def test_run_streams_all_stages_and_result(settings, qloo_mock):
     assert r.status_code == 200 and r.headers["content-type"].startswith("application/x-ndjson")
     evs = events(r)
     done = [e["stage"]["id"] for e in evs if e["type"] == "stage" and e["stage"]["status"] == "done"]
-    assert done == ["intent", "resolve", "portrait", "discovery", "evidence", "planning", "verification", "explanation", "bridge"]
+    assert done == ["intent", "resolve", "portrait", "discovery", "evidence", "planning", "verification", "explanation", "bridge", "grounding"]
     res = evs[-1]
     assert res["type"] == "result"
     assert len(res["days"]) == 2 and res["summary"]["stops"] == 8

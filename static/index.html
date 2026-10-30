@@ -56,6 +56,11 @@
           </div>
         </div>
       </div>
+      <ol class="steps20" aria-label="How it works">
+        <li><b>1</b><span>Name a few things you love: a film, an artist, a vibe.</span></li>
+        <li><b>2</b><span>Qloo's taste graph finds real places in your city that people with your taste love.</span></li>
+        <li><b>3</b><span>You get a day plan with the CO2e of every trip, and lighter options that still feel like you.</span></li>
+      </ol>
       <div class="pillars">
         <article>
           <h3>Taste, not keywords</h3>
@@ -195,7 +200,7 @@
     <!-- How it works -->
     <section id="view-how" class="view prose" hidden>
       <h1>How EarthPulse works</h1>
-      <p class="lede">A fixed eight-stage pipeline. No agent loops, no invented places, and every number traceable.</p>
+      <p class="lede">A fixed ten-stage pipeline. No agent loops, no invented places, and every number traceable.</p>
       <ol class="how-steps">
         <li><b>Understand</b> your favourites, or parse your description (rules, or an optional LLM that may only copy words you used).</li>
         <li><b>Match</b> each interest to a Qloo entity via search, or to a Qloo taste tag for concepts like “slow living”.</li>
@@ -207,6 +212,7 @@
         <li><b>Explain</b>: a one-line “why” assembled from grounded facts only.</li>
         <li><b>Taste Bridge</b>: one more Qloo call looks outside the kinds of places you picked for strong taste matches (at least the plan's median affinity − 0.05) within 4 km of a stop already in your plan, and shows the hop's CO2e next to a separate car trip.</li>
       </ol>
+      <p><b>Grounding check</b>: before anything is shown, a deterministic audit confirms every place came from Qloo in this run, every credited interest is yours, every number in an explanation is in its facts, every CO2e figure recomputes, and your constraints hold.</p>
       <p>Change any constraint on the results page and the agent re-plans with the same taste signals, then shows exactly which stops changed.</p>
       <h2>Scoring weights</h2>
       <table class="weights">

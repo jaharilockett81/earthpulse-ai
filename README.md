@@ -9,7 +9,8 @@ EarthPulse turns a few things you love (a film, an artist, a book, a vibe) into 
 puts every pick on the scale: straight-line distance, round-trip travel CO2e from U.S. EPA emission factors,
 and a **lighter swap** whenever a much closer place is nearly as good a taste match.
 
-- **Live demo:** _add your Render URL here_
+- **Live demo:** _not deployed yet — add the Render URL here_
+- **Status, tests and limits:** [docs/RESULTS.md](docs/RESULTS.md) (read this first; it says what is and isn't verified)
 - **Built for:** the Qloo LLM Hackathon (2026)
 - **License:** MIT
 
@@ -39,7 +40,7 @@ neutral (one uses Qloo's portrait, one uses the user's words), so both are repor
 
 ## Features
 
-- **Live agent timeline.** A nine-stage pipeline streams real backend events to the page as it runs.
+- **Live agent timeline.** A ten-stage pipeline streams real backend events to the page as it runs.
 - **Cultural DNA.** Bars for the taste themes your favourites share (Qloo tag insights) and which of your interests
   drove the plan (summed Qloo explainability).
 - **Taste Bridge.** Places outside the categories you chose that Qloo still rates at least as well as your plan's
@@ -54,6 +55,21 @@ neutral (one uses Qloo's portrait, one uses the user's words), so both are repor
 - **Day plans** with walk/transit legs between stops and day totals compared with driving.
 - **Honest failures**: rate limits, auth errors and empty results are shown as such, never papered over with fake data.
 
+## Trust: verification, adaptation, failure
+
+- **Grounding check before display.** A deterministic validator audits every result against independent records
+  of the run: each place must have come from a Qloo response in this run under the same name; credited interests
+  must be ones you gave; affinities must equal Qloo's; every number in an explanation must appear in its facts
+  (an AI sentence that fails is replaced with the grounded one); all CO2e figures and totals are recomputed; your
+  constraints are re-checked. If a hard check fails, the result is withheld.
+- **Bounded adaptation.** The agent observes how many places survive your filters per category. If a category
+  comes back too thin, it re-queries Qloo once with a wider pool. It never relaxes your constraints.
+- **Honest failure.** 429s and 5xx are retried with backoff (bounded); auth errors, timeouts, unknown interests and
+  empty cities produce clear messages, never fake data; one failed category degrades the plan instead of killing it.
+  `python scripts/failure_drill.py` breaks Qloo and the LLM on purpose in 9 ways: [docs/FAILURE_DRILL.md](docs/FAILURE_DRILL.md).
+- **AI is untrusted.** The optional LLM can only extract interests that appear in your text and reword facts; it
+  never chooses places or numbers. EarthPulse takes no consequential actions (no booking or payment).
+
 ## Architecture
 
 ```mermaid
@@ -67,6 +83,7 @@ flowchart LR
     O --> V[Verification<br/>re-check · replace failures]
     O --> E[Explanation<br/>grounded facts · optional LLM rewording]
     O --> TB[Taste Bridge<br/>outside your categories · near your stops]
+    O --> GR[Grounding check<br/>provenance · numbers · constraints]
     T & D & TB --> Q[(Qloo Hackathon API<br/>throttled · cached · retried)]
     S --> G[(Open-Meteo geocoding)]
     E -.optional.-> L[(Anthropic API)]
@@ -99,7 +116,8 @@ No key yet? `EARTHPULSE_DEV_FIXTURES=1 uvicorn app.main:app` serves clearly-labe
 ## Tests
 
 ```bash
-python -m pytest -q                              # 43 unit + API tests, Qloo mocked with respx
+python -m pytest -q                              # 50 unit + API tests, Qloo mocked with respx
+python scripts/failure_drill.py                   # 9 deliberate failure scenarios
 python scripts/smoke.py http://localhost:8000     # end-to-end against a running server (live test)
 python scripts/evaluate.py --out docs/EVALUATION.md   # persona evaluation (needs QLOO_API_KEY)
 ```

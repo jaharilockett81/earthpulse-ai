@@ -15,6 +15,12 @@ clearly labelled signal. This page documents each step, weight and source.
 | 6 | Plan | Planning | 0 |
 | 7 | Verify | Verification | 0 |
 | 8 | Explain | Explanation | 0 (one optional LLM call) |
+| 9 | Taste Bridge | Taste Bridge | 1 (`/v2/insights` over the categories you didn't pick) |
+| 10 | Grounding check | Grounding | 0 |
+
+If a category returns a full first page (20) but fewer usable places than the plan needs after filtering, Discovery
+re-queries that category once with `take=50`. This is the only retry that isn't an error retry, and it is shown in the
+timeline.
 
 Responses are cached for 24 hours and calls are spaced to stay under the key's 5 requests/second.
 
@@ -92,6 +98,12 @@ Each card's “why” is built from facts only: Qloo explainability (which of yo
 themes shared with your portrait, the place's own Qloo tags, lower-impact tag signals and computed distance. If an
 LLM is configured it may reword those facts; any sentence containing a number not present in the facts is rejected,
 and accepted sentences are labelled AI-written.
+
+## Grounding check
+Runs on every result (and both comparison lists) before it is sent. Checks: provenance (place ids and names match
+what the Qloo client recorded from this run's responses), interests, affinity values, explanation numbers (AI text
+repaired if needed), arithmetic (CO2e recomputed, totals re-added), constraints, claim labels. A hard failure
+withholds the result with an error.
 
 ## Qloo schema provenance
 docs.qloo.com blocks automated reading. Field names follow Qloo's hackathon developer guide and live-probe notes

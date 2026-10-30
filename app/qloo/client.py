@@ -112,6 +112,9 @@ class CallStats:
     def __init__(self) -> None:
         self.network_calls = 0
         self.cache_hits = 0
+        # Provenance: every place Qloo returned during this run, by id -> name. The grounding
+        # check uses this to prove each displayed place came from a Qloo response.
+        self.place_names: dict[str, str] = {}
 
     def as_dict(self) -> dict[str, int]:
         return {"network_calls": self.network_calls, "cache_hits": self.cache_hits}
@@ -247,7 +250,10 @@ class QlooClient:
             params["filter.price_level.max"] = int(price_max)
         if exclude_ids:
             params["filter.exclude.entities"] = ",".join(exclude_ids[:50])
-        return parse_places(await self._get(INSIGHTS_PATH, params, stats))
+        places, locality = parse_places(await self._get(INSIGHTS_PATH, params, stats))
+        if stats is not None:
+            stats.place_names.update({p.entity_id: p.name for p in places})
+        return places, locality
 
     async def taste_tags(self, seed_ids: list[str], tag_types: list[str], take: int = 12,
                          stats: CallStats | None = None) -> list[TagInsight]:

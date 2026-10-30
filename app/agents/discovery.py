@@ -19,6 +19,7 @@ from ..qloo.schemas import Locality, Place
 from ..qloo.taxonomy import CATEGORIES, classify, has_step_free_tag, is_blocked, low_impact_signals
 
 TAKE_PER_CATEGORY = 20
+ADAPT_TAKE = 50  # one wider re-query for a category that came back too thin (bounded: at most once)
 
 
 @dataclass
@@ -58,7 +59,7 @@ def _keep(place: Place, req: RunRequest) -> str | None:
 
 async def discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str], seed_tags: list[str],
                    stats: CallStats, use_signals: bool = True) -> DiscoveryResult:
-    async def one(key: str):
+    async def one(key: str, take: int = TAKE_PER_CATEGORY):
         cat = CATEGORIES[key]
         return await client.place_insights(
             location_query=req.location,
@@ -66,7 +67,7 @@ async def discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str], 
             seed_tags=seed_tags if use_signals else None,
             tags=list(cat.tags),
             price_max=req.budget,
-            take=TAKE_PER_CATEGORY,
+            take=take,
             explain=use_signals,
             stats=stats,
         )
@@ -77,18 +78,20 @@ async def discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str], 
     per_category: dict[str, dict] = {}
     errors: list[QlooError] = []
     locality: Locality | None = None
-    for key, res in zip(req.categories, results):
-        stat = {"label": CATEGORIES[key].label, "returned": 0, "kept": 0, "dropped": 0}
-        per_category[key] = stat
+    need = {k: (1 if k == "stay" else req.days) for k in req.categories}
+
+    def absorb(key: str, res) -> None:
+        nonlocal locality
+        stat = per_category.setdefault(key, {"label": CATEGORIES[key].label, "returned": 0, "kept": 0, "dropped": 0})
         if isinstance(res, QlooError):
             errors.append(res)
             stat["error"] = res.user_message
-            continue
+            return
         if isinstance(res, Exception):
             raise res
         places, loc = res
         locality = locality or loc
-        stat["returned"] = len(places)
+        stat["returned"] = max(stat["returned"], len(places))
         for p in places:
             if p.entity_id in seen:
                 continue
@@ -100,6 +103,19 @@ async def discover(client: QlooClient, req: RunRequest, *, seed_ids: list[str], 
             candidates.append(Candidate(place=p, category=got, step_free=has_step_free_tag(p),
                                         signals=low_impact_signals(p)))
             stat["kept"] += 1
+
+    for key, res in zip(req.categories, results):
+        absorb(key, res)
+    # Observe -> adapt: a category with fewer usable places than the plan needs gets exactly one
+    # wider re-query (Qloo returns the next-ranked places). Constraints are never relaxed.
+    thin = [k for k in req.categories if not per_category[k].get("error")
+            and per_category[k]["kept"] < need[k] and per_category[k]["returned"] >= TAKE_PER_CATEGORY]
+    if thin:
+        retry = await asyncio.gather(*[one(k, ADAPT_TAKE) for k in thin], return_exceptions=True)
+        for key, res in zip(thin, retry):
+            before = per_category[key]["kept"]
+            absorb(key, res)
+            per_category[key]["adapted"] = {"take": ADAPT_TAKE, "gained": per_category[key]["kept"] - before}
     if errors and not candidates:
         raise errors[0]
     return DiscoveryResult(candidates=candidates, locality=locality, per_category=per_category, errors=errors)
