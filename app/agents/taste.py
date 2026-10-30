@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import unicodedata
 from difflib import SequenceMatcher
 
 from ..llm import LLM
@@ -65,6 +66,7 @@ async def parse_intent(req: RunRequest, llm: LLM) -> tuple[list[Seed], str]:
 
 
 def _norm(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()  # Amélie -> Amelie
     s = re.sub(r"\(.*?\)", "", s.lower())
     s = re.sub(r"[^a-z0-9 ]+", " ", s)
     return " ".join(re.sub(r"\b(the|a|an)\b", " ", s).split())
@@ -74,9 +76,25 @@ def similar(a: str, b: str) -> float:
     na, nb = _norm(a), _norm(b)
     if not na or not nb:
         return 0.0
-    if na == nb or na in nb.split(" ") or (len(na) > 3 and (na in nb or nb in na)):
+    if na == nb or na in nb.split(" "):
+        return 1.0
+    short, long_ = sorted((na, nb), key=len)
+    # Substring counts as a match only when it covers most of the other name, so "botanical gardens"
+    # does not match "Botanical Gardens of Peter the Great".
+    if len(short) > 3 and short in long_ and len(short) / len(long_) >= 0.6:
         return 1.0
     return SequenceMatcher(None, na, nb).ratio()
+
+
+async def _tag_match(client: QlooClient, name: str, stats: CallStats) -> dict | None:
+    try:
+        tags = await client.search_tags(name, take=6, stats=stats)
+    except QlooBadRequest:
+        return None
+    tbest = max(tags, key=lambda t: similar(name, t.name), default=None)
+    if tbest and similar(name, tbest.name) >= 0.6:
+        return {"name": tbest.name, "tag_id": tbest.id, "kind": "taste tag", "resolved_as": "tag"}
+    return None
 
 
 async def _resolve_one(client: QlooClient, seed: Seed, stats: CallStats) -> dict:
@@ -84,6 +102,12 @@ async def _resolve_one(client: QlooClient, seed: Seed, stats: CallStats) -> dict
             "kind": seed.kind or "interest", "image_url": None, "resolved_as": "none", "tags": []}
     if seed.entity_id:
         return {**base, "entity_id": seed.entity_id, "resolved_as": "entity"}
+    # All-lowercase free text ("botanical gardens", "slow living") is usually a concept, not a title:
+    # try Qloo taste tags first, and only fall back to entity search.
+    if seed.name == seed.name.lower():
+        tag = await _tag_match(client, seed.name, stats)
+        if tag:
+            return {**base, **tag}
     try:
         try:
             hits = await client.search(seed.name, types=SEARCH_TYPES, take=6, stats=stats)
@@ -97,13 +121,9 @@ async def _resolve_one(client: QlooClient, seed: Seed, stats: CallStats) -> dict
         return {**base, "name": best.name, "entity_id": best.entity_id, "kind": best.kind,
                 "image_url": best.image_url, "resolved_as": "entity",
                 "tags": [t.name for t in best.tags][:8], "disambiguation": best.disambiguation}
-    try:
-        tags = await client.search_tags(seed.name, take=6, stats=stats)
-    except QlooBadRequest:
-        tags = []
-    tbest = max(tags, key=lambda t: similar(seed.name, t.name), default=None)
-    if tbest and similar(seed.name, tbest.name) >= 0.6:
-        return {**base, "name": tbest.name, "tag_id": tbest.id, "kind": "taste tag", "resolved_as": "tag"}
+    tag = await _tag_match(client, seed.name, stats)
+    if tag:
+        return {**base, **tag}
     if best and similar(seed.name, best.name) >= 0.5:
         return {**base, "name": best.name, "entity_id": best.entity_id, "kind": best.kind,
                 "image_url": best.image_url, "resolved_as": "entity", "approximate": True,

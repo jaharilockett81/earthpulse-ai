@@ -30,6 +30,12 @@ async def resolve_origin(req: RunRequest, locality: Locality | None, settings: S
         if got and not far:
             return {**got, "kind": "geocoded", "source": GEOCODE_SOURCE}
     if locality and locality.lat is not None and locality.lon is not None:
+        # Qloo's locality point can be an administrative centroid (Kyoto's sits in the northern
+        # mountains), so prefer the geocoded town centre when it agrees with Qloo's locality.
+        if not settings.fixtures_active:
+            town = await geocode(req.location, settings.geocode_url, transport=transport)
+            if town and haversine_km(town["lat"], town["lon"], locality.lat, locality.lon) <= MAX_ORIGIN_KM:
+                return {**town, "label": f"{town['name']} city centre", "kind": "city_centre", "source": GEOCODE_SOURCE}
         return {"name": locality.name, "label": f"{locality.name} city centre", "lat": locality.lat,
                 "lon": locality.lon, "kind": "city_centre",
                 "source": {"name": "Qloo resolved locality centroid", "url": None}}

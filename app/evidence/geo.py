@@ -43,7 +43,7 @@ async def geocode(name: str, url: str, timeout_s: float = 6.0,
             r = await c.get(url, params={"name": head.strip(), "count": 5, "language": "en", "format": "json"})
             r.raise_for_status()
             results = (r.json() or {}).get("results") or []
-    except (httpx.HTTPError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — geocoding is optional; any failure falls back to Qloo's locality
         log.warning("geocode.failed err=%s", type(exc).__name__)
         return None
     if not results:

@@ -183,3 +183,24 @@ def test_request_requires_taste_and_valid_categories():
         RunRequest(prompt="jazz", location="Lisbon", categories=["casinos"])
     r = RunRequest(prompt="jazz <script>", location="Lisbon", priorities=["low_carbon_travel", "bogus"])
     assert "<" not in r.prompt and r.priorities == ["low_carbon_travel"]
+
+
+def test_similar_rejects_partial_title_matches():
+    assert similar("botanical gardens", "Botanical Gardens of Peter the Great") < 0.72
+    assert similar("Amelie", "Amélie") == 1.0
+
+
+async def test_lowercase_concepts_try_tags_first(settings):
+    import httpx
+    import respx
+
+    from app.agents.taste import _resolve_one
+    from app.models import Seed
+    from app.qloo.client import CallStats, QlooClient
+
+    with respx.mock(base_url="https://hackathon.api.qloo.com") as r:
+        tags = r.get("/v2/tags").mock(return_value=httpx.Response(200, json={"results": {"tags": [
+            {"id": "urn:tag:keyword:qloo:botanical_garden", "name": "botanical gardens"}]}}))
+        search = r.get("/search").mock(return_value=httpx.Response(200, json={"results": []}))
+        out = await _resolve_one(QlooClient(settings), Seed(name="botanical gardens"), CallStats())
+    assert out["resolved_as"] == "tag" and tags.called and not search.called

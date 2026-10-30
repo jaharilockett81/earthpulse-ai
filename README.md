@@ -9,7 +9,7 @@ EarthPulse turns a few things you love (a film, an artist, a book, a vibe) into 
 puts every pick on the scale: straight-line distance, round-trip travel CO2e from U.S. EPA emission factors,
 and a **lighter swap** whenever a much closer place is nearly as good a taste match.
 
-- **Live demo:** _not deployed yet — add the Render URL here_
+- **Live demo:** https://earthpulse-ai-plos.onrender.com (free tier: the first visit after idle can take ~1 minute to wake)
 - **Status, tests and limits:** [docs/RESULTS.md](docs/RESULTS.md) (read this first; it says what is and isn't verified)
 - **Built for:** the Qloo LLM Hackathon (2026)
 - **License:** MIT
