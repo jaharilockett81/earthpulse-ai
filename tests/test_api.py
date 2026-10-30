@@ -166,9 +166,10 @@ def test_evaluation_harness_runs_synthetic():
     spec = importlib.util.spec_from_file_location("evaluate", Path(__file__).parent.parent / "scripts" / "evaluate.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    rows, agg = asyncio.run(mod.evaluate(use_fixtures=True))
+    rows = asyncio.run(mod.evaluate_local(use_fixtures=True))
     assert len(rows) == len(mod.PERSONAS) and all("error" not in r for r in rows)
-    md = mod.render(rows, agg, True)
+    assert all(all(r["grounding"].values()) and set(r["metrics"]) == set(mod.ARMS) for r in rows)
+    md = mod.render(rows, mod.aggregate(rows), "fixtures", True)
     assert "SYNTHETIC DRY RUN" in md and "[Synthetic]" not in md  # no place names in the report
 
 
